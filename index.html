@@ -547,6 +547,23 @@ const primaryBtn = {
   fontFamily: "system-ui",
 };
 
+const dataBtn = {
+  flex: 1,
+  padding: "11px 0",
+  background: "transparent",
+  border: "1px solid #2C2C2E",
+  borderRadius: 12,
+  color: "#8E8E93",
+  fontWeight: 600,
+  fontSize: 13,
+  cursor: "pointer",
+  fontFamily: "system-ui",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 6,
+};
+
 function WeighModal({ bottle, onSave, onCancel }) {
   const [weight, setWeight] = useState(bottle.currentWeight.toString());
   const gasKg = bottle.fullWeight - bottle.emptyWeight;
@@ -918,6 +935,40 @@ function App() {
     setGrillBottle(null);
   }
 
+  function handleExport() {
+    const blob = new Blob([JSON.stringify(bottles, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `flammenwaechter-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function handleImport(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const imported = JSON.parse(ev.target.result);
+        if (!Array.isArray(imported)) throw new Error("Datei enthält keine Flaschen-Liste");
+        const valid = imported.filter((b) => b && typeof b === "object" && b.id != null && b.name);
+        if (valid.length === 0) throw new Error("Keine gültigen Flaschen gefunden");
+        // Merge nach id: bestehende aktualisieren, neue ergänzen — kein Datenverlust
+        const byId = {};
+        bottles.forEach((b) => { byId[b.id] = b; });
+        valid.forEach((b) => { byId[b.id] = b; });
+        save(Object.values(byId));
+        alert(`${valid.length} Flasche(n) importiert.`);
+      } catch (err) {
+        alert("Import fehlgeschlagen: " + err.message);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  }
+
   const totalGasKg = bottles.reduce((sum, b) => sum + Math.max(0, b.currentWeight - b.emptyWeight), 0);
 
   return (
@@ -990,6 +1041,22 @@ function App() {
         >
           <span style={{ fontSize: 20 }}>+</span> Flasche hinzufügen
         </button>
+
+        <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+          {bottles.length > 0 && (
+            <button onClick={handleExport} style={dataBtn}>
+              <span aria-hidden="true">⬆️</span> Daten sichern
+            </button>
+          )}
+          <label style={dataBtn}>
+            <span aria-hidden="true">⬇️</span> Sicherung laden
+            <input type="file" accept="application/json,.json" onChange={handleImport} style={{ display: "none" }} />
+          </label>
+        </div>
+
+        <div style={{ color: "#48484A", fontSize: 11, fontFamily: "system-ui", textAlign: "center", marginTop: 10, lineHeight: 1.4 }}>
+          Deine Daten liegen nur auf diesem Gerät. Sichere sie regelmäßig oder vor einem Gerätewechsel.
+        </div>
       </div>
 
       {showAdd && (
