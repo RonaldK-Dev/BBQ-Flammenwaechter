@@ -1,0 +1,1035 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#000000" />
+  <title>Flammenwächter</title>
+
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon.png" />
+  <link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png" />
+  <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Flammenwächter" />
+  <meta name="mobile-web-app-capable" content="yes" />
+
+  <!-- React + Babel über CDN (kein Build-Step, wie BBQ-Lab) -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: #000; overscroll-behavior-y: contain; }
+    body { font-family: system-ui, -apple-system, sans-serif; }
+    input { -webkit-appearance: none; }
+    /* iOS Safe-Area unten */
+    #root { padding-bottom: env(safe-area-inset-bottom); }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef } = React;
+
+
+const STORAGE_KEY = "gas-bottle-tracker-v1";
+
+const GAS_TYPES = [
+  { label: "Propan", color: "#FF6B35" },
+  { label: "Butan", color: "#4ECDC4" },
+  { label: "Camping Gas", color: "#45B7D1" },
+];
+
+// Verbrauch in Gramm pro Stunde bei Vollgas (Napoleon Rogue SE 525 RSIB als Standard)
+// Umrechnung: BTU -> kW (/3412) -> g/h (* 75 g/kWh)
+const DEFAULT_BURNERS = [
+  { id: "b1", label: "Brenner 1 (li)", gramsPerHour: 264 },
+  { id: "b2", label: "Brenner 2", gramsPerHour: 264 },
+  { id: "b3", label: "Brenner 3", gramsPerHour: 264 },
+  { id: "b4", label: "Brenner 4 (re)", gramsPerHour: 264 },
+  { id: "rear", label: "Heckbrenner", gramsPerHour: 319 },
+  { id: "sizzle", label: "Sizzle Zone", gramsPerHour: 308 },
+];
+
+// Brennstufen: durchschalten Aus -> Voll -> Mittel -> Klein
+const LEVELS = [
+  { key: "off", label: "Aus", factor: 0, color: "#636366" },
+  { key: "full", label: "Voll", factor: 1, color: "#FF3B30" },
+  { key: "med", label: "Mittel", factor: 0.5, color: "#FF9F0A" },
+  { key: "low", label: "Klein", factor: 0.25, color: "#34C759" },
+];
+
+function nextLevel(key) {
+  const idx = LEVELS.findIndex((l) => l.key === key);
+  return LEVELS[(idx + 1) % LEVELS.length].key;
+}
+function levelByKey(key) {
+  return LEVELS.find((l) => l.key === key) || LEVELS[0];
+}
+
+// Schnell-Presets (links -> rechts angeordnet)
+const PRESETS = [
+  { label: "🔥 Vorheizen (alle)", burners: ["b1", "b2", "b3", "b4"] },
+  { label: "1 Brenner", burners: ["b2"] },
+  { label: "Links + Rechts", burners: ["b1", "b4"] },
+  { label: "Mitte (2+3)", burners: ["b2", "b3"] },
+];
+
+function formatKg(val) {
+  return Number(val).toFixed(2).replace(".", ",") + " kg";
+}
+
+function formatDuration(seconds) {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  if (h > 0) return `${h}h ${m}min`;
+  if (m > 0) return `${m}min ${s}s`;
+  return `${s}s`;
+}
+
+function getLevelColor(pct) {
+  if (pct > 40) return "#34C759";
+  if (pct > 15) return "#FF9F0A";
+  return "#FF3B30";
+}
+
+function getLevelLabel(pct) {
+  if (pct > 40) return "Gut gefüllt";
+  if (pct > 15) return "Wird knapp";
+  return "Fast leer!";
+}
+
+function GaugeArc({ pct }) {
+  const r = 54;
+  const cx = 70;
+  const cy = 70;
+  const startAngle = -210;
+  const totalAngle = 240;
+  const angle = startAngle + (pct / 100) * totalAngle;
+
+  function polar(deg, radius) {
+    const rad = (deg * Math.PI) / 180;
+    return { x: cx + radius * Math.cos(rad), y: cy + radius * Math.sin(rad) };
+  }
+  function arcPath(from, to, radius) {
+    const s = polar(from, radius);
+    const e = polar(to, radius);
+    const large = to - from > 180 ? 1 : 0;
+    return `M ${s.x} ${s.y} A ${radius} ${radius} 0 ${large} 1 ${e.x} ${e.y}`;
+  }
+
+  const color = getLevelColor(pct);
+  const needle = polar(angle, 38);
+  const needleBase1 = polar(angle + 90, 5);
+  const needleBase2 = polar(angle - 90, 5);
+
+  return (
+    <svg width="140" height="105" viewBox="0 0 140 105">
+      <path d={arcPath(-210, 30, r)} fill="none" stroke="#2C2C2E" strokeWidth="10" strokeLinecap="round" />
+      {pct > 0 && (
+        <path
+          d={arcPath(-210, angle, r)}
+          fill="none"
+          stroke={color}
+          strokeWidth="10"
+          strokeLinecap="round"
+          style={{ filter: `drop-shadow(0 0 4px ${color}80)` }}
+        />
+      )}
+      <polygon
+        points={`${needle.x},${needle.y} ${needleBase1.x},${needleBase1.y} ${needleBase2.x},${needleBase2.y}`}
+        fill={color}
+      />
+      <circle cx={cx} cy={cy} r="5" fill="#1C1C1E" stroke={color} strokeWidth="2" />
+      <text x="12" y="90" fill="#636366" fontSize="9" fontFamily="system-ui">0</text>
+      <text x="124" y="90" fill="#636366" fontSize="9" fontFamily="system-ui">100%</text>
+    </svg>
+  );
+}
+
+function BottleCard({ bottle, onEdit, onDelete, onWeigh, onGrill, onHistory }) {
+  const gasKg = bottle.fullWeight - bottle.emptyWeight;
+  const currentGas = Math.max(0, bottle.currentWeight - bottle.emptyWeight);
+  const pct = gasKg > 0 ? Math.min(100, Math.round((currentGas / gasKg) * 100)) : 0;
+  const color = getLevelColor(pct);
+  const gasType = GAS_TYPES.find((g) => g.label === bottle.gasType) || GAS_TYPES[0];
+  const sessions = bottle.sessions || [];
+  const sessionCount = sessions.length;
+
+  return (
+    <div
+      style={{
+        background: "#1C1C1E",
+        borderRadius: 20,
+        padding: "20px",
+        marginBottom: 16,
+        border: `1px solid #2C2C2E`,
+        position: "relative",
+        overflow: "hidden",
+      }}
+    >
+      <div
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          width: 4,
+          height: "100%",
+          background: gasType.color,
+          borderRadius: "20px 0 0 20px",
+        }}
+      />
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div style={{ flex: 1, paddingLeft: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 18, fontWeight: 700, color: "#F2F2F7", fontFamily: "system-ui" }}>
+              {bottle.name}
+            </span>
+            <span
+              style={{
+                background: gasType.color + "22",
+                color: gasType.color,
+                borderRadius: 8,
+                padding: "1px 8px",
+                fontSize: 11,
+                fontWeight: 600,
+                fontFamily: "system-ui",
+              }}
+            >
+              {bottle.gasType}
+            </span>
+          </div>
+          <div style={{ color: color, fontSize: 13, fontWeight: 600, fontFamily: "system-ui" }}>
+            {getLevelLabel(pct)}
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => onEdit(bottle)} style={iconBtn}>✏️</button>
+          <button onClick={() => onDelete(bottle.id)} style={iconBtn}>🗑️</button>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 0, marginTop: 4 }}>
+        <GaugeArc pct={pct} />
+        <div style={{ flex: 1 }}>
+          <div style={{ color: color, fontSize: 36, fontWeight: 800, fontFamily: "system-ui", lineHeight: 1 }}>
+            {pct}%
+          </div>
+          <div style={{ color: "#8E8E93", fontSize: 12, fontFamily: "system-ui", marginTop: 2 }}>
+            {formatKg(currentGas)} von {formatKg(gasKg)}
+          </div>
+
+          <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+            {[
+              { label: "Leer", value: formatKg(bottle.emptyWeight) },
+              { label: "Voll", value: formatKg(bottle.fullWeight) },
+              { label: "Aktuell", value: formatKg(bottle.currentWeight) },
+              { label: "Gas drin", value: formatKg(currentGas) },
+            ].map((item) => (
+              <div key={item.label} style={{ background: "#2C2C2E", borderRadius: 10, padding: "6px 10px" }}>
+                <div style={{ color: "#636366", fontSize: 10, fontFamily: "system-ui" }}>{item.label}</div>
+                <div style={{ color: "#F2F2F7", fontSize: 13, fontWeight: 600, fontFamily: "system-ui" }}>
+                  {item.value}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Session-Statistik */}
+      {sessionCount > 0 && (
+        <div
+          onClick={() => onHistory(bottle)}
+          style={{
+            marginTop: 12,
+            background: "#2C2C2E",
+            borderRadius: 12,
+            padding: "10px 14px",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            cursor: "pointer",
+          }}
+        >
+          <div style={{ fontFamily: "system-ui" }}>
+            <div style={{ color: "#636366", fontSize: 10 }}>GRILL-SESSIONS</div>
+            <div style={{ color: "#F2F2F7", fontSize: 15, fontWeight: 700 }}>
+              {sessionCount}× gegrillt 🔥
+            </div>
+          </div>
+          <div style={{ color: "#8E8E93", fontSize: 13, fontFamily: "system-ui" }}>Verlauf ›</div>
+        </div>
+      )}
+
+      {bottle.lastWeighed && (
+        <div style={{ color: "#48484A", fontSize: 11, fontFamily: "system-ui", marginTop: 8, paddingLeft: 8 }}>
+          Zuletzt gewogen: {new Date(bottle.lastWeighed).toLocaleDateString("de-AT")}
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+        <button
+          onClick={() => onWeigh(bottle)}
+          style={{
+            flex: 1,
+            background: "#2C2C2E",
+            border: "1px solid #3A3A3C",
+            borderRadius: 12,
+            color: "#8E8E93",
+            fontWeight: 700,
+            fontSize: 14,
+            padding: "11px 0",
+            cursor: "pointer",
+            fontFamily: "system-ui",
+          }}
+        >
+          ⚖️ Wiegen
+        </button>
+        <button
+          onClick={() => onGrill(bottle)}
+          style={{
+            flex: 1.4,
+            background: color + "18",
+            border: `1px solid ${color}40`,
+            borderRadius: 12,
+            color: color,
+            fontWeight: 700,
+            fontSize: 14,
+            padding: "11px 0",
+            cursor: "pointer",
+            fontFamily: "system-ui",
+          }}
+        >
+          🔥 Grillen
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const iconBtn = {
+  background: "#2C2C2E",
+  border: "none",
+  borderRadius: 10,
+  width: 32,
+  height: 32,
+  cursor: "pointer",
+  fontSize: 15,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+};
+
+function Modal({ title, onClose, children }) {
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "#00000090",
+        display: "flex",
+        alignItems: "flex-end",
+        justifyContent: "center",
+        zIndex: 100,
+        backdropFilter: "blur(4px)",
+      }}
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div
+        style={{
+          background: "#1C1C1E",
+          borderRadius: "24px 24px 0 0",
+          padding: "24px 20px 36px",
+          width: "100%",
+          maxWidth: 480,
+          maxHeight: "92vh",
+          overflowY: "auto",
+        }}
+      >
+        <div style={{ width: 36, height: 4, background: "#48484A", borderRadius: 2, margin: "0 auto 20px" }} />
+        <div
+          style={{
+            fontSize: 18,
+            fontWeight: 700,
+            color: "#F2F2F7",
+            fontFamily: "system-ui",
+            marginBottom: 20,
+            textAlign: "center",
+          }}
+        >
+          {title}
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function InputField({ label, value, onChange, placeholder, unit, type = "text" }) {
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <label
+        style={{
+          display: "block",
+          color: "#8E8E93",
+          fontSize: 12,
+          fontFamily: "system-ui",
+          marginBottom: 6,
+          fontWeight: 600,
+          textTransform: "uppercase",
+          letterSpacing: 0.5,
+        }}
+      >
+        {label}
+      </label>
+      <div style={{ position: "relative" }}>
+        <input
+          type={type}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          step={type === "number" ? "0.01" : undefined}
+          style={{
+            width: "100%",
+            background: "#2C2C2E",
+            border: "1px solid #3A3A3C",
+            borderRadius: 12,
+            padding: unit ? "12px 48px 12px 14px" : "12px 14px",
+            color: "#F2F2F7",
+            fontSize: 16,
+            fontFamily: "system-ui",
+            outline: "none",
+            boxSizing: "border-box",
+          }}
+        />
+        {unit && (
+          <span
+            style={{
+              position: "absolute",
+              right: 14,
+              top: "50%",
+              transform: "translateY(-50%)",
+              color: "#636366",
+              fontSize: 13,
+              fontFamily: "system-ui",
+            }}
+          >
+            {unit}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function BottleForm({ initial, onSave, onCancel }) {
+  const [name, setName] = useState(initial?.name || "");
+  const [gasType, setGasType] = useState(initial?.gasType || "Propan");
+  const [emptyWeight, setEmptyWeight] = useState(initial?.emptyWeight?.toString() || "");
+  const [fullWeight, setFullWeight] = useState(initial?.fullWeight?.toString() || "");
+  const [currentWeight, setCurrentWeight] = useState(initial?.currentWeight?.toString() || "");
+
+  const gasKg = parseFloat(fullWeight) - parseFloat(emptyWeight);
+  const isValid =
+    name.trim() &&
+    parseFloat(emptyWeight) > 0 &&
+    parseFloat(fullWeight) > parseFloat(emptyWeight) &&
+    parseFloat(currentWeight) >= 0;
+
+  function handleSave() {
+    if (!isValid) return;
+    onSave({
+      ...(initial || {}),
+      id: initial?.id || Date.now().toString(),
+      name: name.trim(),
+      gasType,
+      emptyWeight: parseFloat(emptyWeight),
+      fullWeight: parseFloat(fullWeight),
+      currentWeight: parseFloat(currentWeight),
+      lastWeighed: initial?.lastWeighed || new Date().toISOString(),
+      sessions: initial?.sessions || [],
+    });
+  }
+
+  return (
+    <div>
+      <InputField label="Name der Flasche" value={name} onChange={setName} placeholder="z.B. Napoleon Hauptflasche" />
+      <div style={{ marginBottom: 14 }}>
+        <label
+          style={{
+            display: "block",
+            color: "#8E8E93",
+            fontSize: 12,
+            fontFamily: "system-ui",
+            marginBottom: 6,
+            fontWeight: 600,
+            textTransform: "uppercase",
+            letterSpacing: 0.5,
+          }}
+        >
+          Gastyp
+        </label>
+        <div style={{ display: "flex", gap: 8 }}>
+          {GAS_TYPES.map((g) => (
+            <button
+              key={g.label}
+              onClick={() => setGasType(g.label)}
+              style={{
+                flex: 1,
+                padding: "10px 4px",
+                borderRadius: 12,
+                border: `1.5px solid ${gasType === g.label ? g.color : "#3A3A3C"}`,
+                background: gasType === g.label ? g.color + "22" : "#2C2C2E",
+                color: gasType === g.label ? g.color : "#8E8E93",
+                fontWeight: 600,
+                fontSize: 13,
+                cursor: "pointer",
+                fontFamily: "system-ui",
+              }}
+            >
+              {g.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <InputField label="Leergewicht (aufgestempelt)" value={emptyWeight} onChange={setEmptyWeight} placeholder="z.B. 7.5" unit="kg" type="number" />
+      <InputField label="Vollgewicht (Leer + Gasmenge)" value={fullWeight} onChange={setFullWeight} placeholder="z.B. 15.5" unit="kg" type="number" />
+      {!isNaN(gasKg) && gasKg > 0 && (
+        <div style={{ background: "#2C2C2E", borderRadius: 10, padding: "8px 12px", marginBottom: 14, color: "#4ECDC4", fontSize: 13, fontFamily: "system-ui" }}>
+          💡 Gasinhalt: {gasKg.toFixed(2).replace(".", ",")} kg
+        </div>
+      )}
+      <InputField label="Aktuelles Gewicht (jetzt wiegen)" value={currentWeight} onChange={setCurrentWeight} placeholder="z.B. 12.0" unit="kg" type="number" />
+      <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+        <button onClick={onCancel} style={cancelBtn}>Abbrechen</button>
+        <button
+          onClick={handleSave}
+          disabled={!isValid}
+          style={{ ...primaryBtn, flex: 2, background: isValid ? "#FF6B35" : "#2C2C2E", color: isValid ? "#fff" : "#48484A", cursor: isValid ? "pointer" : "not-allowed" }}
+        >
+          Speichern
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const cancelBtn = {
+  flex: 1,
+  padding: "14px",
+  background: "#2C2C2E",
+  border: "none",
+  borderRadius: 14,
+  color: "#8E8E93",
+  fontWeight: 600,
+  fontSize: 15,
+  cursor: "pointer",
+  fontFamily: "system-ui",
+};
+
+const primaryBtn = {
+  padding: "14px",
+  border: "none",
+  borderRadius: 14,
+  fontWeight: 700,
+  fontSize: 15,
+  fontFamily: "system-ui",
+};
+
+function WeighModal({ bottle, onSave, onCancel }) {
+  const [weight, setWeight] = useState(bottle.currentWeight.toString());
+  const gasKg = bottle.fullWeight - bottle.emptyWeight;
+  const currentGas = Math.max(0, parseFloat(weight || 0) - bottle.emptyWeight);
+  const pct = gasKg > 0 ? Math.min(100, Math.round((currentGas / gasKg) * 100)) : 0;
+  const color = getLevelColor(pct);
+
+  return (
+    <div>
+      <div style={{ textAlign: "center", marginBottom: 20 }}>
+        <GaugeArc pct={pct} />
+        <div style={{ color, fontSize: 42, fontWeight: 800, fontFamily: "system-ui" }}>{pct}%</div>
+        <div style={{ color: "#8E8E93", fontSize: 13, fontFamily: "system-ui" }}>{formatKg(currentGas)} Gas verbleibend</div>
+      </div>
+      <InputField label="Aktuelles Gewicht eingeben" value={weight} onChange={setWeight} placeholder="z.B. 10.1" unit="kg" type="number" />
+      <div style={{ background: "#2C2C2E", borderRadius: 10, padding: "10px 14px", marginBottom: 16, fontFamily: "system-ui" }}>
+        {[
+          { label: "Leergewicht", value: formatKg(bottle.emptyWeight) },
+          { label: "Vollgewicht", value: formatKg(bottle.fullWeight) },
+          { label: "Gesamt Gas", value: formatKg(gasKg) },
+        ].map((item) => (
+          <div key={item.label} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", color: "#8E8E93", fontSize: 13 }}>
+            <span>{item.label}</span>
+            <span style={{ color: "#F2F2F7" }}>{item.value}</span>
+          </div>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 10 }}>
+        <button onClick={onCancel} style={cancelBtn}>Abbrechen</button>
+        <button onClick={() => onSave(parseFloat(weight))} style={{ ...primaryBtn, flex: 2, background: color, color: "#fff", cursor: "pointer" }}>
+          Gewicht speichern
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function GrillModal({ bottle, onFinish, onCancel }) {
+  const [activeBurners, setActiveBurners] = useState({ b1: "full", b2: "full", b3: "full", b4: "full", rear: "off", sizzle: "off" });
+  const [running, setRunning] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
+  const startRef = useRef(null);
+  const intervalRef = useRef(null);
+
+  const currentGas = Math.max(0, bottle.currentWeight - bottle.emptyWeight);
+
+  // Aktueller Verbrauch pro Stunde (mit Brennstufe)
+  const gramsPerHour = DEFAULT_BURNERS.reduce(
+    (sum, b) => sum + b.gramsPerHour * levelByKey(activeBurners[b.id]).factor,
+    0
+  );
+  const gramsPerSecond = gramsPerHour / 3600;
+
+  // verbrauchte Gramm während laufender Session – wir tracken pro Sekunde mit aktueller Brennerwahl
+  const consumedRef = useRef(0);
+  const [consumed, setConsumed] = useState(0);
+
+  useEffect(() => {
+    if (running) {
+      intervalRef.current = setInterval(() => {
+        setElapsed((e) => e + 1);
+        consumedRef.current += gramsPerSecond;
+        setConsumed(consumedRef.current);
+      }, 1000);
+    }
+    return () => clearInterval(intervalRef.current);
+  }, [running, gramsPerSecond]);
+
+  function toggleBurner(id) {
+    setActiveBurners((prev) => ({ ...prev, [id]: nextLevel(prev[id]) }));
+  }
+
+  function applyPreset(preset) {
+    const next = { b1: "off", b2: "off", b3: "off", b4: "off", rear: "off", sizzle: "off" };
+    preset.burners.forEach((id) => { next[id] = "full"; });
+    setActiveBurners(next);
+  }
+
+  function handleStart() {
+    if (gramsPerHour === 0) return;
+    startRef.current = new Date().toISOString();
+    setRunning(true);
+  }
+
+  function handleStop() {
+    setRunning(false);
+    clearInterval(intervalRef.current);
+  }
+
+  function handleSave() {
+    const consumedKg = consumedRef.current / 1000;
+    onFinish({
+      id: Date.now().toString(),
+      date: startRef.current || new Date().toISOString(),
+      durationSeconds: elapsed,
+      consumedKg: consumedKg,
+      burners: DEFAULT_BURNERS.filter((b) => activeBurners[b.id] !== "off").map((b) => b.label),
+    });
+  }
+
+  const remainingAfter = Math.max(0, currentGas - consumed / 1000);
+  const noBurner = gramsPerHour === 0;
+
+  return (
+    <div>
+      {/* Timer-Anzeige */}
+      <div style={{ textAlign: "center", marginBottom: 18 }}>
+        <div style={{ color: running ? "#FF6B35" : "#636366", fontSize: 48, fontWeight: 800, fontFamily: "system-ui", letterSpacing: 1, fontVariantNumeric: "tabular-nums" }}>
+          {String(Math.floor(elapsed / 3600)).padStart(2, "0")}:
+          {String(Math.floor((elapsed % 3600) / 60)).padStart(2, "0")}:
+          {String(elapsed % 60).padStart(2, "0")}
+        </div>
+        <div style={{ color: "#8E8E93", fontSize: 13, fontFamily: "system-ui" }}>
+          {running ? "🔥 Grill läuft..." : elapsed > 0 ? "⏸ Pausiert" : "Brenner wählen & starten"}
+        </div>
+      </div>
+
+      {/* Schnell-Presets */}
+      <div style={{ color: "#8E8E93", fontSize: 12, fontFamily: "system-ui", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
+        Schnellwahl
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 18 }}>
+        {PRESETS.map((p) => (
+          <button
+            key={p.label}
+            onClick={() => applyPreset(p)}
+            style={{
+              padding: "10px 8px",
+              borderRadius: 12,
+              border: "1px solid #3A3A3C",
+              background: "#2C2C2E",
+              color: "#F2F2F7",
+              fontWeight: 600,
+              fontSize: 13,
+              cursor: "pointer",
+              fontFamily: "system-ui",
+            }}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Brennerauswahl */}
+      <div style={{ color: "#8E8E93", fontSize: 12, fontFamily: "system-ui", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>
+        Aktive Brenner
+      </div>
+      <div style={{ color: "#48484A", fontSize: 11, fontFamily: "system-ui", marginBottom: 8 }}>
+        Tippen zum Durchschalten: Aus → Voll → Mittel → Klein
+      </div>
+      <div style={{ marginBottom: 18 }}>
+        {/* 4 Hauptbrenner als 2x2 Grid, links -> rechts */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+          {DEFAULT_BURNERS.filter((b) => b.id.startsWith("b")).map((b) => {
+            const lvl = levelByKey(activeBurners[b.id]);
+            const on = lvl.factor > 0;
+            const gph = Math.round(b.gramsPerHour * lvl.factor);
+            return (
+              <button
+                key={b.id}
+                onClick={() => toggleBurner(b.id)}
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "flex-start",
+                  padding: "10px 12px",
+                  borderRadius: 12,
+                  border: `1.5px solid ${on ? lvl.color : "#3A3A3C"}`,
+                  background: on ? lvl.color + "22" : "#2C2C2E",
+                  cursor: "pointer",
+                  fontFamily: "system-ui",
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", width: "100%", alignItems: "center" }}>
+                  <span style={{ color: on ? "#F2F2F7" : "#8E8E93", fontWeight: 600, fontSize: 14 }}>{b.label}</span>
+                  <span style={{ color: lvl.color, fontWeight: 700, fontSize: 12 }}>{lvl.label}</span>
+                </div>
+                <span style={{ color: on ? lvl.color : "#636366", fontSize: 11, marginTop: 2 }}>
+                  {on ? `~${gph} g/h` : "aus"}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        {/* Heckbrenner + Sizzle Zone */}
+        {DEFAULT_BURNERS.filter((b) => !b.id.startsWith("b")).map((b) => {
+          const lvl = levelByKey(activeBurners[b.id]);
+          const on = lvl.factor > 0;
+          const gph = Math.round(b.gramsPerHour * lvl.factor);
+          return (
+            <button
+              key={b.id}
+              onClick={() => toggleBurner(b.id)}
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                width: "100%",
+                padding: "12px 14px",
+                marginBottom: 8,
+                borderRadius: 12,
+                border: `1.5px solid ${on ? lvl.color : "#3A3A3C"}`,
+                background: on ? lvl.color + "22" : "#2C2C2E",
+                cursor: "pointer",
+                fontFamily: "system-ui",
+              }}
+            >
+              <span style={{ color: on ? "#F2F2F7" : "#8E8E93", fontWeight: 600, fontSize: 15 }}>{b.label}</span>
+              <span style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                <span style={{ color: lvl.color, fontWeight: 700, fontSize: 13 }}>{lvl.label}</span>
+                <span style={{ color: on ? lvl.color : "#636366", fontSize: 12 }}>
+                  {on ? `~${gph} g/h` : "aus"}
+                </span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Live-Verbrauch */}
+      <div style={{ background: "#2C2C2E", borderRadius: 12, padding: "12px 14px", marginBottom: 18, fontFamily: "system-ui" }}>
+        {[
+          { label: "Verbrauch aktuell", value: `~${gramsPerHour} g/h` },
+          { label: "Diese Session", value: `${(consumed).toFixed(0)} g` },
+          { label: "Gas danach", value: formatKg(remainingAfter) },
+        ].map((item) => (
+          <div key={item.label} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", color: "#8E8E93", fontSize: 13 }}>
+            <span>{item.label}</span>
+            <span style={{ color: "#F2F2F7", fontWeight: 600 }}>{item.value}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Steuerung */}
+      {!running && elapsed === 0 && (
+        <button
+          onClick={handleStart}
+          disabled={noBurner}
+          style={{ ...primaryBtn, width: "100%", background: noBurner ? "#2C2C2E" : "#34C759", color: noBurner ? "#48484A" : "#fff", cursor: noBurner ? "not-allowed" : "pointer" }}
+        >
+          ▶ Session starten
+        </button>
+      )}
+      {running && (
+        <button onClick={handleStop} style={{ ...primaryBtn, width: "100%", background: "#FF9F0A", color: "#fff", cursor: "pointer" }}>
+          ⏸ Stoppen
+        </button>
+      )}
+      {!running && elapsed > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <button onClick={() => setRunning(true)} style={{ ...primaryBtn, width: "100%", background: "#34C759", color: "#fff", cursor: "pointer" }}>
+            ▶ Weiter
+          </button>
+          <button onClick={handleSave} style={{ ...primaryBtn, width: "100%", background: "#FF6B35", color: "#fff", cursor: "pointer" }}>
+            ✓ Session speichern & Gas abziehen
+          </button>
+        </div>
+      )}
+
+      <button onClick={onCancel} style={{ ...cancelBtn, width: "100%", marginTop: 10, flex: "none" }}>
+        Abbrechen
+      </button>
+
+      <div style={{ color: "#48484A", fontSize: 11, fontFamily: "system-ui", marginTop: 12, textAlign: "center", lineHeight: 1.4 }}>
+        Schätzung basiert auf Napoleon Rogue SE 525. Für genaue Werte zwischendurch wiegen.
+      </div>
+    </div>
+  );
+}
+
+function HistoryModal({ bottle, onCancel }) {
+  const sessions = [...(bottle.sessions || [])].reverse();
+  const totalConsumed = sessions.reduce((s, x) => s + x.consumedKg, 0);
+  const totalTime = sessions.reduce((s, x) => s + x.durationSeconds, 0);
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 10, marginBottom: 18 }}>
+        {[
+          { label: "Sessions", value: sessions.length },
+          { label: "Gas verbraucht", value: formatKg(totalConsumed) },
+          { label: "Grillzeit", value: formatDuration(totalTime) },
+        ].map((s) => (
+          <div key={s.label} style={{ flex: 1, background: "#2C2C2E", borderRadius: 12, padding: "12px 8px", textAlign: "center", fontFamily: "system-ui" }}>
+            <div style={{ color: "#FF6B35", fontSize: 18, fontWeight: 800 }}>{s.value}</div>
+            <div style={{ color: "#636366", fontSize: 10, marginTop: 2 }}>{s.label}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: "50vh", overflowY: "auto" }}>
+        {sessions.length === 0 && (
+          <div style={{ color: "#48484A", textAlign: "center", padding: 30, fontFamily: "system-ui" }}>
+            Noch keine Sessions
+          </div>
+        )}
+        {sessions.map((s) => (
+          <div key={s.id} style={{ background: "#2C2C2E", borderRadius: 12, padding: "12px 14px", fontFamily: "system-ui" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ color: "#F2F2F7", fontSize: 14, fontWeight: 600 }}>
+                {new Date(s.date).toLocaleDateString("de-AT", { day: "2-digit", month: "2-digit", year: "2-digit" })}
+              </span>
+              <span style={{ color: "#FF6B35", fontSize: 14, fontWeight: 700 }}>{(s.consumedKg * 1000).toFixed(0)} g</span>
+            </div>
+            <div style={{ color: "#8E8E93", fontSize: 12, marginTop: 3 }}>
+              {formatDuration(s.durationSeconds)} · {s.burners.join(", ")}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <button onClick={onCancel} style={{ ...cancelBtn, width: "100%", marginTop: 16, flex: "none" }}>
+        Schließen
+      </button>
+    </div>
+  );
+}
+
+function App() {
+  const [bottles, setBottles] = useState([]);
+  const [showAdd, setShowAdd] = useState(false);
+  const [editBottle, setEditBottle] = useState(null);
+  const [weighBottle, setWeighBottle] = useState(null);
+  const [grillBottle, setGrillBottle] = useState(null);
+  const [historyBottle, setHistoryBottle] = useState(null);
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored) setBottles(JSON.parse(stored));
+    } catch {}
+  }, []);
+
+  function save(updated) {
+    setBottles(updated);
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+    } catch {}
+  }
+
+  function handleAdd(bottle) {
+    save([...bottles, bottle]);
+    setShowAdd(false);
+  }
+  function handleEdit(bottle) {
+    save(bottles.map((b) => (b.id === bottle.id ? bottle : b)));
+    setEditBottle(null);
+  }
+  function handleDelete(id) {
+    save(bottles.filter((b) => b.id !== id));
+  }
+  function handleWeigh(id, weight) {
+    save(bottles.map((b) => (b.id === id ? { ...b, currentWeight: weight, lastWeighed: new Date().toISOString() } : b)));
+    setWeighBottle(null);
+  }
+  function handleGrillFinish(session) {
+    const id = grillBottle.id;
+    save(
+      bottles.map((b) => {
+        if (b.id !== id) return b;
+        const newCurrent = Math.max(b.emptyWeight, b.currentWeight - session.consumedKg);
+        return {
+          ...b,
+          currentWeight: Math.round(newCurrent * 100) / 100,
+          sessions: [...(b.sessions || []), session],
+        };
+      })
+    );
+    setGrillBottle(null);
+  }
+
+  const totalGasKg = bottles.reduce((sum, b) => sum + Math.max(0, b.currentWeight - b.emptyWeight), 0);
+
+  return (
+    <div
+      style={{
+        minHeight: "100vh",
+        background: "#000",
+        padding: "0 0 40px",
+        maxWidth: 480,
+        margin: "0 auto",
+        fontFamily: "system-ui, -apple-system, sans-serif",
+      }}
+    >
+      <div style={{ background: "#1C1C1E", padding: "52px 20px 20px", borderBottom: "1px solid #2C2C2E", position: "sticky", top: 0, zIndex: 10 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div>
+            <div style={{ color: "#8E8E93", fontSize: 12, fontWeight: 600, letterSpacing: 0.5, textTransform: "uppercase" }}>BBQ-Lab</div>
+            <div style={{ color: "#F2F2F7", fontSize: 26, fontWeight: 800, lineHeight: 1.1, marginTop: 2 }}>Flammenwächter 🔥</div>
+          </div>
+          {bottles.length > 0 && (
+            <div style={{ textAlign: "right" }}>
+              <div style={{ color: "#8E8E93", fontSize: 11, fontFamily: "system-ui" }}>Gesamt Gas</div>
+              <div style={{ color: "#FF6B35", fontSize: 20, fontWeight: 800 }}>{totalGasKg.toFixed(2).replace(".", ",")} kg</div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div style={{ padding: "20px 16px 0" }}>
+        {bottles.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "60px 20px", color: "#48484A" }}>
+            <div style={{ fontSize: 64, marginBottom: 16 }}>⛽</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: "#636366", marginBottom: 8 }}>Noch keine Flaschen</div>
+            <div style={{ fontSize: 14, color: "#48484A", lineHeight: 1.5 }}>
+              Füge deine erste Gasflasche hinzu – du brauchst Leergewicht und Füllgewicht von der Flasche.
+            </div>
+          </div>
+        ) : (
+          bottles.map((bottle) => (
+            <BottleCard
+              key={bottle.id}
+              bottle={bottle}
+              onEdit={setEditBottle}
+              onDelete={handleDelete}
+              onWeigh={setWeighBottle}
+              onGrill={setGrillBottle}
+              onHistory={setHistoryBottle}
+            />
+          ))
+        )}
+
+        <button
+          onClick={() => setShowAdd(true)}
+          style={{
+            width: "100%",
+            padding: "16px",
+            background: "#1C1C1E",
+            border: "1.5px dashed #3A3A3C",
+            borderRadius: 20,
+            color: "#FF6B35",
+            fontWeight: 700,
+            fontSize: 16,
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 8,
+            marginTop: bottles.length > 0 ? 4 : 0,
+          }}
+        >
+          <span style={{ fontSize: 20 }}>+</span> Flasche hinzufügen
+        </button>
+      </div>
+
+      {showAdd && (
+        <Modal title="Neue Gasflasche" onClose={() => setShowAdd(false)}>
+          <BottleForm onSave={handleAdd} onCancel={() => setShowAdd(false)} />
+        </Modal>
+      )}
+      {editBottle && (
+        <Modal title="Flasche bearbeiten" onClose={() => setEditBottle(null)}>
+          <BottleForm initial={editBottle} onSave={handleEdit} onCancel={() => setEditBottle(null)} />
+        </Modal>
+      )}
+      {weighBottle && (
+        <Modal title={`⚖️ ${weighBottle.name}`} onClose={() => setWeighBottle(null)}>
+          <WeighModal bottle={weighBottle} onSave={(weight) => handleWeigh(weighBottle.id, weight)} onCancel={() => setWeighBottle(null)} />
+        </Modal>
+      )}
+      {grillBottle && (
+        <Modal title={`🔥 ${grillBottle.name}`} onClose={() => setGrillBottle(null)}>
+          <GrillModal bottle={grillBottle} onFinish={handleGrillFinish} onCancel={() => setGrillBottle(null)} />
+        </Modal>
+      )}
+      {historyBottle && (
+        <Modal title={`📊 ${historyBottle.name}`} onClose={() => setHistoryBottle(null)}>
+          <HistoryModal bottle={historyBottle} onCancel={() => setHistoryBottle(null)} />
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+
+const container = document.getElementById('root');
+const root = ReactDOM.createRoot(container);
+root.render(<App />);
+  </script>
+
+  <!-- Service Worker registrieren -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js').catch(err => console.log('SW Fehler:', err));
+      });
+    }
+  </script>
+</body>
+</html>

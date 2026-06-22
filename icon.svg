@@ -1,0 +1,57 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1C1C1E"/>
+      <stop offset="1" stop-color="#000000"/>
+    </linearGradient>
+    <linearGradient id="flame" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#FF3B30"/>
+      <stop offset="0.45" stop-color="#FF6B35"/>
+      <stop offset="0.8" stop-color="#FF9F0A"/>
+      <stop offset="1" stop-color="#FFD60A"/>
+    </linearGradient>
+    <radialGradient id="eyeglow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#FFE08A"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Background rounded square -->
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+
+  <!-- Outer flame body -->
+  <path d="M256 70
+           C 300 140, 360 160, 360 250
+           C 360 300, 340 330, 330 350
+           C 360 340, 380 300, 384 270
+           C 410 320, 414 380, 384 420
+           C 356 458, 312 478, 256 478
+           C 200 478, 156 458, 128 420
+           C 98 380, 102 320, 128 270
+           C 132 300, 152 340, 182 350
+           C 172 330, 152 300, 152 250
+           C 152 160, 212 140, 256 70 Z"
+        fill="url(#flame)"/>
+
+  <!-- Inner darker mouth area for monster face -->
+  <path d="M256 200
+           C 286 240, 300 270, 300 320
+           C 300 370, 280 410, 256 430
+           C 232 410, 212 370, 212 320
+           C 212 270, 226 240, 256 200 Z"
+        fill="#1C1C1E" opacity="0.55"/>
+
+  <!-- Eyes -->
+  <ellipse cx="218" cy="300" rx="26" ry="32" fill="url(#eyeglow)"/>
+  <ellipse cx="294" cy="300" rx="26" ry="32" fill="url(#eyeglow)"/>
+  <circle cx="222" cy="306" r="12" fill="#1C1C1E"/>
+  <circle cx="290" cy="306" r="12" fill="#1C1C1E"/>
+
+  <!-- Angry brows -->
+  <path d="M188 268 L246 286" stroke="#1C1C1E" stroke-width="14" stroke-linecap="round"/>
+  <path d="M324 268 L266 286" stroke="#1C1C1E" stroke-width="14" stroke-linecap="round"/>
+
+  <!-- Toothy grin -->
+  <path d="M222 360 L236 384 L250 360 L264 384 L278 360 L292 384"
+        fill="none" stroke="#1C1C1E" stroke-width="12" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>
