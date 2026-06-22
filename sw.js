@@ -1,5 +1,5 @@
 // Flammenwächter Service Worker
-const CACHE_NAME = "flammenwaechter-v1";
+const CACHE_NAME = "flammenwaechter-v2";
 const ASSETS = [
   "./",
   "./index.html",
@@ -11,7 +11,7 @@ const ASSETS = [
   "./favicon-16.png",
   "https://unpkg.com/react@18/umd/react.production.min.js",
   "https://unpkg.com/react-dom@18/umd/react-dom.production.min.js",
-  "https://unpkg.com/@babel/standalone/babel.min.js"
+  "https://unpkg.com/@babel/standalone@7/babel.min.js"
 ];
 
 // Install: Assets cachen
@@ -30,17 +30,34 @@ self.addEventListener("activate", (event) => {
   );
 });
 
-// Fetch: Cache-first, dann Netzwerk
+// Fetch-Strategie:
+// - HTML-Navigationen: Network-First. So kommt ein App-Update sofort an und eine
+//   alte index.html kann nie einen Fix blockieren. Offline -> letzter Cache-Stand.
+// - Übrige Assets (Icons, CDN-Libs): Cache-First (statisch, ändert sich kaum).
 self.addEventListener("fetch", (event) => {
+  const req = event.request;
+
+  if (req.mode === "navigate") {
+    event.respondWith(
+      fetch(req)
+        .then((resp) => {
+          const clone = resp.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(req, clone));
+          return resp;
+        })
+        .catch(() => caches.match(req).then((c) => c || caches.match("./index.html")))
+    );
+    return;
+  }
+
   event.respondWith(
-    caches.match(event.request).then((cached) => {
+    caches.match(req).then((cached) => {
       return (
         cached ||
-        fetch(event.request).then((resp) => {
-          // Erfolgreiche GET-Antworten nachladen
-          if (event.request.method === "GET" && resp.status === 200) {
+        fetch(req).then((resp) => {
+          if (req.method === "GET" && resp.status === 200) {
             const clone = resp.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+            caches.open(CACHE_NAME).then((cache) => cache.put(req, clone));
           }
           return resp;
         }).catch(() => cached)
