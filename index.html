@@ -604,9 +604,11 @@ function WeighModal({ bottle, onSave, onCancel }) {
 function GrillModal({ bottle, onFinish, onCancel }) {
   const [activeBurners, setActiveBurners] = useState({ b1: "full", b2: "full", b3: "full", b4: "full", rear: "off", sizzle: "off" });
   const [running, setRunning] = useState(false);
-  const [elapsed, setElapsed] = useState(0);
-  const startRef = useRef(null);
-  const intervalRef = useRef(null);
+  const [, forceTick] = useState(0);        // nur zum Auffrischen der Live-Anzeige
+  const startedAtRef = useRef(null);        // ISO-Startzeit (für date)
+  const segStartRef = useRef(null);         // ms-Zeitstempel des laufenden Segments
+  const accRef = useRef({ seconds: 0, grams: 0, perBurner: {} }); // über Segmente kumuliert
+  const tickRef = useRef(null);
 
   const currentGas = Math.max(0, bottle.currentWeight - bottle.emptyWeight);
 
@@ -615,28 +617,50 @@ function GrillModal({ bottle, onFinish, onCancel }) {
     (sum, b) => sum + b.gramsPerHour * levelByKey(activeBurners[b.id]).factor,
     0
   );
-  const gramsPerSecond = gramsPerHour / 3600;
 
-  // verbrauchte Gramm während laufender Session – wir tracken pro Sekunde mit aktueller Brennerwahl
-  const consumedRef = useRef(0);
-  const [consumed, setConsumed] = useState(0);
+  // Laufendes Segment (Zeit seit letzter Stufenänderung) auf den Akku anrechnen.
+  // Zeitstempel-basiert: läuft auch korrekt weiter, wenn iOS die App im Hintergrund
+  // eingefroren hat. Pro Brenner werden die echten Gramm mitgezählt.
+  function flushSegment() {
+    if (segStartRef.current == null) return;
+    const secs = (Date.now() - segStartRef.current) / 1000;
+    segStartRef.current = Date.now();
+    if (secs <= 0) return;
+    DEFAULT_BURNERS.forEach((b) => {
+      const f = levelByKey(activeBurners[b.id]).factor;
+      if (f > 0) {
+        const g = b.gramsPerHour * f * (secs / 3600);
+        accRef.current.perBurner[b.label] = (accRef.current.perBurner[b.label] || 0) + g;
+        accRef.current.grams += g;
+      }
+    });
+    accRef.current.seconds += secs;
+  }
 
+  function liveSeconds() {
+    let s = accRef.current.seconds;
+    if (running && segStartRef.current != null) s += (Date.now() - segStartRef.current) / 1000;
+    return Math.floor(s);
+  }
+  function liveGrams() {
+    let g = accRef.current.grams;
+    if (running && segStartRef.current != null) g += gramsPerHour * ((Date.now() - segStartRef.current) / 1000 / 3600);
+    return g;
+  }
+
+  // Anzeige jede Sekunde auffrischen (reiner Re-Render; gerechnet wird über Zeitstempel)
   useEffect(() => {
-    if (running) {
-      intervalRef.current = setInterval(() => {
-        setElapsed((e) => e + 1);
-        consumedRef.current += gramsPerSecond;
-        setConsumed(consumedRef.current);
-      }, 1000);
-    }
-    return () => clearInterval(intervalRef.current);
-  }, [running, gramsPerSecond]);
+    if (running) tickRef.current = setInterval(() => forceTick((t) => t + 1), 1000);
+    return () => clearInterval(tickRef.current);
+  }, [running]);
 
   function toggleBurner(id) {
+    if (running) flushSegment(); // alte Stufe bis jetzt verbuchen, dann umstellen
     setActiveBurners((prev) => ({ ...prev, [id]: nextLevel(prev[id]) }));
   }
 
   function applyPreset(preset) {
+    if (running) flushSegment();
     const next = { b1: "off", b2: "off", b3: "off", b4: "off", rear: "off", sizzle: "off" };
     preset.burners.forEach((id) => { next[id] = "full"; });
     setActiveBurners(next);
@@ -644,25 +668,36 @@ function GrillModal({ bottle, onFinish, onCancel }) {
 
   function handleStart() {
     if (gramsPerHour === 0) return;
-    startRef.current = new Date().toISOString();
+    if (!startedAtRef.current) startedAtRef.current = new Date().toISOString();
+    segStartRef.current = Date.now();
     setRunning(true);
   }
 
   function handleStop() {
+    flushSegment();
+    segStartRef.current = null;
     setRunning(false);
-    clearInterval(intervalRef.current);
+  }
+
+  function handleResume() {
+    segStartRef.current = Date.now();
+    setRunning(true);
   }
 
   function handleSave() {
-    const consumedKg = consumedRef.current / 1000;
+    if (running) flushSegment();
+    const pb = accRef.current.perBurner;
     onFinish({
       id: Date.now().toString(),
-      date: startRef.current || new Date().toISOString(),
-      durationSeconds: elapsed,
-      consumedKg: consumedKg,
-      burners: DEFAULT_BURNERS.filter((b) => activeBurners[b.id] !== "off").map((b) => ({ label: b.label, level: levelByKey(activeBurners[b.id]).label })),
+      date: startedAtRef.current || new Date().toISOString(),
+      durationSeconds: Math.round(accRef.current.seconds),
+      consumedKg: accRef.current.grams / 1000,
+      burners: DEFAULT_BURNERS.filter((b) => (pb[b.label] || 0) > 0).map((b) => ({ label: b.label, grams: Math.round(pb[b.label]) })),
     });
   }
+
+  const elapsed = liveSeconds();
+  const consumed = liveGrams();
 
   const remainingAfter = Math.max(0, currentGas - consumed / 1000);
   const noBurner = gramsPerHour === 0;
@@ -814,7 +849,7 @@ function GrillModal({ bottle, onFinish, onCancel }) {
       )}
       {!running && elapsed > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <button onClick={() => setRunning(true)} style={{ ...primaryBtn, width: "100%", background: "#34C75918", border: "1px solid #34C75940", color: "#34C759", cursor: "pointer" }}>
+          <button onClick={handleResume} style={{ ...primaryBtn, width: "100%", background: "#34C75918", border: "1px solid #34C75940", color: "#34C759", cursor: "pointer" }}>
             ▶ Weiter
           </button>
           <button onClick={handleSave} style={{ ...primaryBtn, width: "100%", background: "#FF6B35", color: "#fff", cursor: "pointer" }}>
@@ -869,7 +904,7 @@ function HistoryModal({ bottle, onCancel }) {
               <span style={{ color: "#FF6B35", fontSize: 14, fontWeight: 700 }}>{(s.consumedKg * 1000).toFixed(0)} g</span>
             </div>
             <div style={{ color: "#8E8E93", fontSize: 12, marginTop: 3 }}>
-              {formatDuration(s.durationSeconds)} · {s.burners.map((b) => (typeof b === "string" ? b : `${b.label}: ${b.level}`)).join(", ")}
+              {formatDuration(s.durationSeconds)} · {s.burners.map((b) => (typeof b === "string" ? b : b.grams != null ? `${b.label}: ${b.grams} g` : `${b.label}: ${b.level}`)).join(", ")}
             </div>
           </div>
         ))}
