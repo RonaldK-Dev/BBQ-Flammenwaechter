@@ -49,6 +49,18 @@ const GAS_TYPES = [
   { label: "Camping Gas", color: "#45B7D1" },
 ];
 
+// Flaschen-Presets: füllen Leer- + Vollgewicht automatisch, damit man die
+// "7,5 kg" (= Füllmenge!) nicht versehentlich ins Leergewicht-Feld tippt.
+// empty = Tara (Composite-Werte offiziell von FLAGA), gasKg = Füllmenge.
+// WICHTIG: Composite-Tara ist standardisiert, Stahl-Tara ist je Flasche
+// einzeln aufgestempelt und schwankt -> Preset ist Startwert, Stempel gilt.
+const BOTTLE_PRESETS = [
+  { label: "FLAGA Superleicht 7,5 kg", gasType: "Propan", empty: 4.4, gasKg: 7.5 },
+  { label: "FLAGA Superleicht 10 kg", gasType: "Propan", empty: 5.3, gasKg: 10 },
+  { label: "Stahl 11 kg", gasType: "Propan", empty: 12.0, gasKg: 11 },
+  { label: "Stahl 5 kg", gasType: "Propan", empty: 7.4, gasKg: 5 },
+];
+
 // Verbrauch in Gramm pro Stunde bei Vollgas (Napoleon Rogue SE 525 RSIB als Standard)
 // Umrechnung: BTU -> kW (/3412) -> g/h (* 75 g/kWh)
 const DEFAULT_BURNERS = [
@@ -439,6 +451,17 @@ function BottleForm({ initial, onSave, onCancel }) {
   const [emptyWeight, setEmptyWeight] = useState(initial?.emptyWeight?.toString() || "");
   const [fullWeight, setFullWeight] = useState(initial?.fullWeight?.toString() || "");
   const [currentWeight, setCurrentWeight] = useState(initial?.currentWeight?.toString() || "");
+  const [presetLabel, setPresetLabel] = useState(null);
+
+  function applyBottlePreset(p) {
+    setPresetLabel(p.label);
+    setGasType(p.gasType);
+    setEmptyWeight(p.empty.toString());
+    setFullWeight(String(Number((p.empty + p.gasKg).toFixed(2))));
+  }
+  // Manuelles Editieren der Gewichte hebt die Preset-Markierung auf
+  function onEmpty(v) { setEmptyWeight(v); setPresetLabel(null); }
+  function onFull(v) { setFullWeight(v); setPresetLabel(null); }
 
   const gasKg = parseFloat(fullWeight) - parseFloat(emptyWeight);
   const isValid =
@@ -503,8 +526,67 @@ function BottleForm({ initial, onSave, onCancel }) {
           ))}
         </div>
       </div>
-      <InputField label="Leergewicht (aufgestempelt)" value={emptyWeight} onChange={setEmptyWeight} placeholder="z.B. 7.5" unit="kg" type="number" />
-      <InputField label="Vollgewicht (Leer + Gasmenge)" value={fullWeight} onChange={setFullWeight} placeholder="z.B. 15.5" unit="kg" type="number" />
+      <div style={{ marginBottom: 14 }}>
+        <label
+          style={{
+            display: "block",
+            color: "#8E8E93",
+            fontSize: 12,
+            fontFamily: "system-ui",
+            marginBottom: 6,
+            fontWeight: 600,
+            textTransform: "uppercase",
+            letterSpacing: 0.5,
+          }}
+        >
+          Flaschen-Typ (füllt Leer- & Vollgewicht)
+        </label>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          {BOTTLE_PRESETS.map((p) => {
+            const active = presetLabel === p.label;
+            return (
+              <button
+                key={p.label}
+                onClick={() => applyBottlePreset(p)}
+                style={{
+                  padding: "9px 12px",
+                  borderRadius: 12,
+                  border: `1.5px solid ${active ? "#FF6B35" : "#3A3A3C"}`,
+                  background: active ? "#FF6B3522" : "#2C2C2E",
+                  color: active ? "#FF6B35" : "#8E8E93",
+                  fontWeight: 600,
+                  fontSize: 13,
+                  cursor: "pointer",
+                  fontFamily: "system-ui",
+                }}
+              >
+                {p.label}
+              </button>
+            );
+          })}
+          <button
+            onClick={() => { setPresetLabel(null); setEmptyWeight(""); setFullWeight(""); }}
+            style={{
+              padding: "9px 12px",
+              borderRadius: 12,
+              border: `1.5px solid ${presetLabel === null ? "#FF6B35" : "#3A3A3C"}`,
+              background: presetLabel === null ? "#FF6B3522" : "#2C2C2E",
+              color: presetLabel === null ? "#FF6B35" : "#8E8E93",
+              fontWeight: 600,
+              fontSize: 13,
+              cursor: "pointer",
+              fontFamily: "system-ui",
+            }}
+          >
+            ✏️ Eigene
+          </button>
+        </div>
+        <div style={{ color: "#48484A", fontSize: 11, fontFamily: "system-ui", marginTop: 8, lineHeight: 1.4 }}>
+          „7,5 / 10 kg" = Füllmenge, nicht Gewicht. Tara mit dem Stempel auf deiner Flasche abgleichen.
+        </div>
+      </div>
+      <InputField label="Leergewicht (aufgestempelt)" value={emptyWeight} onChange={onEmpty} placeholder="z.B. 4.4" unit="kg" type="number" />
+      <InputField label="Vollgewicht (Leer + Gasmenge)" value={fullWeight} onChange={onFull} placeholder="z.B. 11.9" unit="kg" type="number" />
       {!isNaN(gasKg) && gasKg > 0 && (
         <div style={{ background: "#2C2C2E", borderRadius: 10, padding: "8px 12px", marginBottom: 14, color: "#4ECDC4", fontSize: 13, fontFamily: "system-ui" }}>
           💡 Gasinhalt: {gasKg.toFixed(2).replace(".", ",")} kg
