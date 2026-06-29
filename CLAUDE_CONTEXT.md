@@ -48,7 +48,7 @@ Array von bottle-Objekten:
       date: ISO-string,
       durationSeconds: number,
       consumedKg: number,
-      burners: string[]   // Labels der aktiven Brenner
+      burners: [{ label: string, grams: number }]   // pro Brenner kumulierte Gramm über alle Stufenwechsel
     }
   ]
 }
@@ -60,12 +60,16 @@ Array von bottle-Objekten:
    - Zeigeranzeige (SVG GaugeArc), Farbe grün>40% / orange>15% / rot
 3. "Wiegen"-Modal: aktuelles Gewicht eingeben → Füllstand aktualisiert
 4. "Grillen"-Modal (Session-Tracker):
-   - Timer (setInterval, sekundenweise)
+   - Timer läuft über Zeitstempel-Differenz (nicht setInterval-Zählung) → hintergrund-tauglich, läuft korrekt weiter wenn iOS die App in den Hintergrund legt
    - 6 Brenner einzeln, je mit Stufe: Aus/Voll/Mittel/Klein (Faktor 0/1/0.5/0.25)
    - Tippen schaltet durch die Stufen (nextLevel)
+   - Echte Gramm pro Brenner werden über alle Stufenwechsel kumuliert (nicht nur Endzustand) → Verlauf zeigt z.B. "Brenner 1: 180 g"
    - Schnell-Presets: Vorheizen(alle) / 1 Brenner / Links+Rechts / Mitte(2+3)
    - Live-Verbrauch g/h, zieht beim Speichern geschätztes Gas vom currentWeight ab
+   - Abbrechen-/Start-Button: transparenter "glasiger" Look
+   - Tacho-Labels "0" / "100%" sauber unter den Bogenenden positioniert
 5. Session-Verlauf pro Flasche mit Statistik (Anzahl, Gesamt-Gas, Gesamt-Zeit)
+6. Daten-Export/-Import: lokales JSON-Backup, Import als Merge nach id (kein Datenverlust bei PWA-Löschen/Gerätewechsel)
 
 ## Brenner-Verbrauchswerte (DEFAULT_BURNERS in index.html)
 Basis: BTU → kW (/3412) → g/h (×75 g/kWh), Vollgas:
@@ -81,14 +85,14 @@ Basis: BTU → kW (/3412) → g/h (×75 g/kWh), Vollgas:
 - Service Worker wirft in der LOKALEN Datei-Vorschau auf iOS den Fehler
   "Job rejected for non app-bound domain" → harmlos, nur lokal. Auf GitHub Pages
   (HTTPS) funktioniert er normal.
-- Timer läuft via setInterval → zählt NICHT korrekt weiter wenn iOS die App in den
-  Hintergrund legt. Fix für später: Verbrauch über Zeitstempel-Differenz statt
-  Sekunden-Hochzählen berechnen.
 - Stufen-Faktoren (0.5 / 0.25) sind Annahmen; manche Grills regeln "Klein" eher auf ~15%.
+- Brenner-Verbrauchswerte (DEFAULT_BURNERS) sind BTU→g/h-Schätzwerte, noch nicht kalibriert.
+  1. Test-Session (2026-06-26) zeigte ~264 g/h/Hauptbrenner als grob plausibel — der
+  alte Timer-Bug (setInterval statt Zeitstempel) war der eigentliche Messfehler, nicht
+  die Brennerwerte. Nächste Session mit korrektem Tracking liefert exakte Kalibrierdaten.
 
 ## Mögliche nächste Schritte
-- Verbrauchswerte nach echten Test-Sessions kalibrieren
-- Hintergrund-tauglicher Timer (Zeitstempel-Diff)
+- Verbrauchswerte nach echten Test-Sessions feinkalibrieren (vorher/nachher wiegen + Backup)
 - Optional später: echte iOS-App via Capacitor (localStorage → bleibt nutzbar,
   Code fast unverändert übernehmbar)
 - Optional: Brenner-Werte im UI editierbar machen statt im Code
