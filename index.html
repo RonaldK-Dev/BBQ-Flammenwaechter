@@ -344,6 +344,23 @@ const iconBtn = {
 };
 
 function Modal({ title, onClose, children }) {
+  useEffect(() => {
+    const scrollY = window.scrollY;
+    const body = document.body;
+    body.style.position = "fixed";
+    body.style.top = `-${scrollY}px`;
+    body.style.left = "0";
+    body.style.right = "0";
+    body.style.width = "100%";
+    return () => {
+      body.style.position = "";
+      body.style.top = "";
+      body.style.left = "";
+      body.style.right = "";
+      body.style.width = "";
+      window.scrollTo(0, scrollY);
+    };
+  }, []);
   return (
     <div
       style={{
@@ -969,7 +986,7 @@ function SessionRow({ session: s, onDelete }) {
     <div style={{ position: "relative", borderRadius: 12, overflow: "hidden" }}>
       <button
         onClick={() => onDelete(s)}
-        style={{ position: "absolute", top: 0, right: 0, bottom: 0, width: 92, border: "none", background: "#FF3B30", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, fontFamily: "system-ui" }}
+        style={{ position: "absolute", top: 0, right: 0, bottom: 0, width: 92, border: "none", borderLeft: "1px solid #FF3B3040", background: "#FF3B3018", backdropFilter: "blur(4px)", WebkitBackdropFilter: "blur(4px)", color: "#FF3B30", fontWeight: 600, fontSize: 13, cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, fontFamily: "system-ui" }}
       >
         <span style={{ fontSize: 18 }}>🗑</span> Löschen
       </button>
