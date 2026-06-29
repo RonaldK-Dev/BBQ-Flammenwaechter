@@ -951,10 +951,59 @@ function GrillModal({ bottle, onFinish, onCancel }) {
   );
 }
 
-function HistoryModal({ bottle, onCancel }) {
+function SessionRow({ session: s, onDelete }) {
+  const [dx, setDx] = useState(0);
+  const startX = useRef(null);
+  const baseDx = useRef(0);
+  const OPEN = -92;
+  function onTouchStart(e) { startX.current = e.touches[0].clientX; baseDx.current = dx; }
+  function onTouchMove(e) {
+    if (startX.current == null) return;
+    let next = baseDx.current + (e.touches[0].clientX - startX.current);
+    if (next > 0) next = 0;
+    if (next < OPEN) next = OPEN;
+    setDx(next);
+  }
+  function onTouchEnd() { setDx(dx < OPEN / 2 ? OPEN : 0); startX.current = null; }
+  return (
+    <div style={{ position: "relative", borderRadius: 12, overflow: "hidden" }}>
+      <button
+        onClick={() => onDelete(s)}
+        style={{ position: "absolute", top: 0, right: 0, bottom: 0, width: 92, border: "none", background: "#FF3B30", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, fontFamily: "system-ui" }}
+      >
+        <span style={{ fontSize: 18 }}>🗑</span> Löschen
+      </button>
+      <div
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+        style={{ position: "relative", background: "#2C2C2E", borderRadius: 12, padding: "12px 14px", fontFamily: "system-ui", transform: `translateX(${dx}px)`, transition: startX.current == null ? "transform 0.2s ease" : "none", touchAction: "pan-y" }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span style={{ color: "#F2F2F7", fontSize: 14, fontWeight: 600 }}>
+            {new Date(s.date).toLocaleDateString("de-AT", { day: "2-digit", month: "2-digit", year: "2-digit" })}
+            {" · "}{new Date(s.date).toLocaleTimeString("de-AT", { hour: "2-digit", minute: "2-digit" })}
+          </span>
+          <span style={{ color: "#FF6B35", fontSize: 14, fontWeight: 700 }}>{(s.consumedKg * 1000).toFixed(0)} g</span>
+        </div>
+        <div style={{ color: "#8E8E93", fontSize: 12, marginTop: 3 }}>
+          {formatDuration(s.durationSeconds)} · {s.burners.map((b) => (typeof b === "string" ? b : b.grams != null ? `${b.label}: ${b.grams} g` : `${b.label}: ${b.level}`)).join(", ")}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HistoryModal({ bottle, onCancel, onDeleteSession }) {
   const sessions = [...(bottle.sessions || [])].reverse();
   const totalConsumed = sessions.reduce((s, x) => s + x.consumedKg, 0);
   const totalTime = sessions.reduce((s, x) => s + x.durationSeconds, 0);
+  function confirmDelete(s) {
+    const when = new Date(s.date).toLocaleDateString("de-AT", { day: "2-digit", month: "2-digit", year: "2-digit" });
+    if (window.confirm(`Session vom ${when} (${(s.consumedKg * 1000).toFixed(0)} g) löschen?\n\nDas geschätzte Gas wird dem Füllstand wieder gutgeschrieben.`)) {
+      onDeleteSession(s.id);
+    }
+  }
 
   return (
     <div>
@@ -978,19 +1027,15 @@ function HistoryModal({ bottle, onCancel }) {
           </div>
         )}
         {sessions.map((s) => (
-          <div key={s.id} style={{ background: "#2C2C2E", borderRadius: 12, padding: "12px 14px", fontFamily: "system-ui" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ color: "#F2F2F7", fontSize: 14, fontWeight: 600 }}>
-                {new Date(s.date).toLocaleDateString("de-AT", { day: "2-digit", month: "2-digit", year: "2-digit" })}
-              </span>
-              <span style={{ color: "#FF6B35", fontSize: 14, fontWeight: 700 }}>{(s.consumedKg * 1000).toFixed(0)} g</span>
-            </div>
-            <div style={{ color: "#8E8E93", fontSize: 12, marginTop: 3 }}>
-              {formatDuration(s.durationSeconds)} · {s.burners.map((b) => (typeof b === "string" ? b : b.grams != null ? `${b.label}: ${b.grams} g` : `${b.label}: ${b.level}`)).join(", ")}
-            </div>
-          </div>
+          <SessionRow key={s.id} session={s} onDelete={confirmDelete} />
         ))}
       </div>
+
+      {sessions.length > 0 && (
+        <div style={{ color: "#48484A", fontSize: 11, fontFamily: "system-ui", textAlign: "center", marginTop: 10 }}>
+          ← Nach links wischen zum Löschen
+        </div>
+      )}
 
       <button onClick={onCancel} style={{ ...cancelBtn, width: "100%", marginTop: 16, flex: "none" }}>
         Schließen
@@ -1050,6 +1095,23 @@ function App() {
       })
     );
     setGrillBottle(null);
+  }
+  function handleDeleteSession(sessionId) {
+    const id = historyBottle.id;
+    let updatedBottle = null;
+    const updated = bottles.map((b) => {
+      if (b.id !== id) return b;
+      const sess = (b.sessions || []).find((s) => s.id === sessionId);
+      const restored = sess ? Math.min(b.fullWeight, b.currentWeight + sess.consumedKg) : b.currentWeight;
+      updatedBottle = {
+        ...b,
+        currentWeight: Math.round(restored * 100) / 100,
+        sessions: (b.sessions || []).filter((s) => s.id !== sessionId),
+      };
+      return updatedBottle;
+    });
+    save(updated);
+    setHistoryBottle(updatedBottle);
   }
 
   function handleExport() {
@@ -1198,7 +1260,7 @@ function App() {
       )}
       {historyBottle && (
         <Modal title={`📊 ${historyBottle.name}`} onClose={() => setHistoryBottle(null)}>
-          <HistoryModal bottle={historyBottle} onCancel={() => setHistoryBottle(null)} />
+          <HistoryModal bottle={historyBottle} onCancel={() => setHistoryBottle(null)} onDeleteSession={handleDeleteSession} />
         </Modal>
       )}
     </div>

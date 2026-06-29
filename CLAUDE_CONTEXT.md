@@ -69,6 +69,10 @@ Array von bottle-Objekten:
    - Abbrechen-/Start-Button: transparenter "glasiger" Look
    - Tacho-Labels "0" / "100%" sauber unter den Bogenenden positioniert
 5. Session-Verlauf pro Flasche mit Statistik (Anzahl, Gesamt-Gas, Gesamt-Zeit)
+   - Karten zeigen Datum + Uhrzeit (mehrere Sessions/Tag bleiben unterscheidbar)
+   - Swipe-links auf einer Session-Karte (SessionRow) enthüllt "🗑 Löschen" → mit
+     Bestätigung; gelöschte Session bucht ihr geschätztes Gas wieder auf currentWeight
+     zurück (Umkehrung von handleGrillFinish, gedeckelt auf fullWeight)
 6. Daten-Export/-Import: lokales JSON-Backup, Import als Merge nach id (kein Datenverlust bei PWA-Löschen/Gerätewechsel)
 
 ## Brenner-Verbrauchswerte (DEFAULT_BURNERS in index.html)
