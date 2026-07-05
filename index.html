@@ -976,7 +976,7 @@ function SessionRow({ session: s, onDelete }) {
   const startX = useRef(null);
   const baseDx = useRef(0);
   const dragging = useRef(false);
-  const OPEN = -92;
+  const OPEN = -100; // 92 Button-Breite + 8px sichtbarer Abstand zur Zeile
   // Pointer-Events statt Touch-Events: so funktioniert das Wischen per Touch
   // UND per Maus-Ziehen im Desktop-Browser (Touch-Events feuern dort nie).
   // dxLive (Ref) statt State "dx" in onPointerUp lesen: bei schnellen/gebatchten
