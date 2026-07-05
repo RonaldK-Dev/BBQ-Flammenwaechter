@@ -61,14 +61,16 @@ const BOTTLE_PRESETS = [
   { label: "Stahl 5 kg", gasType: "Propan", empty: 7.4, gasKg: 5 },
 ];
 
-// Verbrauch in Gramm pro Stunde bei Vollgas (Napoleon Rogue SE 525 RSIB als Standard)
+// Verbrauch in Gramm pro Stunde bei Vollgas (Napoleon Rogue PRO-S 525 RSIB als Standard)
 // Umrechnung: BTU -> kW (/3412) -> g/h (* 75 g/kWh)
+// Heckbrenner am 2026-07-05 anhand echter Wiegung kalibriert (550g über ~2,5h
+// gemischt Mittel/Voll, real 6,90kg -> 6,35kg) statt reinem BTU-Sollwert (319 g/h)
 const DEFAULT_BURNERS = [
   { id: "b1", label: "Brenner 1 (li)", gramsPerHour: 264 },
   { id: "b2", label: "Brenner 2", gramsPerHour: 264 },
   { id: "b3", label: "Brenner 3", gramsPerHour: 264 },
   { id: "b4", label: "Brenner 4 (re)", gramsPerHour: 264 },
-  { id: "rear", label: "Heckbrenner", gramsPerHour: 319 },
+  { id: "rear", label: "Heckbrenner", gramsPerHour: 290 },
   { id: "sizzle", label: "Sizzle Zone", gramsPerHour: 308 },
 ];
 
@@ -962,7 +964,7 @@ function GrillModal({ bottle, onFinish, onCancel }) {
       </button>
 
       <div style={{ color: "#48484A", fontSize: 11, fontFamily: "system-ui", marginTop: 12, textAlign: "center", lineHeight: 1.4 }}>
-        Schätzung basiert auf Napoleon Rogue SE 525. Für genaue Werte zwischendurch wiegen.
+        Schätzung basiert auf Napoleon Rogue PRO-S 525. Für genaue Werte zwischendurch wiegen.
       </div>
     </div>
   );

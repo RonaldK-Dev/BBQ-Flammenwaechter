@@ -3,7 +3,7 @@
 ## Was ist das Projekt
 PWA-App "Flammenwächter" – Teil des BBQ-Lab Projekts. Trackt Gasflaschen-Füllstand
 per Gewicht und schätzt den Grillverbrauch pro Session. Abgestimmt auf den Grill
-Napoleon Rogue SE 525 RSIB (4 Hauptbrenner + Heckbrenner + Sizzle Zone).
+Napoleon Rogue PRO-S 525 RSIB (4 Hauptbrenner + Heckbrenner + Sizzle Zone).
 
 ## Tech-Stack (bewusst gewählt)
 - Standalone `index.html` mit React 18 + Babel über CDN – KEIN Build-Step
@@ -77,23 +77,33 @@ Array von bottle-Objekten:
 
 ## Brenner-Verbrauchswerte (DEFAULT_BURNERS in index.html)
 Basis: BTU → kW (/3412) → g/h (×75 g/kWh), Vollgas:
-- b1 "Brenner 1 (li)"  264 g/h
-- b2 "Brenner 2"       264 g/h
-- b3 "Brenner 3"       264 g/h
-- b4 "Brenner 4 (re)"  264 g/h
-- rear "Heckbrenner"   319 g/h
-- sizzle "Sizzle Zone" 308 g/h
-→ Das sind Schätzwerte bei Vollgas. Nach echten Wiegungen kalibrieren.
+- b1 "Brenner 1 (li)"  264 g/h  (BTU-Sollwert, noch unkalibriert)
+- b2 "Brenner 2"       264 g/h  (BTU-Sollwert, noch unkalibriert)
+- b3 "Brenner 3"       264 g/h  (BTU-Sollwert, noch unkalibriert)
+- b4 "Brenner 4 (re)"  264 g/h  (BTU-Sollwert, noch unkalibriert)
+- rear "Heckbrenner"   290 g/h  (am 2026-07-05 kalibriert, siehe unten — war 319 g/h)
+- sizzle "Sizzle Zone" 308 g/h  (BTU-Sollwert, noch unkalibriert)
 
 ## Bekannte Punkte / offen
 - Service Worker wirft in der LOKALEN Datei-Vorschau auf iOS den Fehler
   "Job rejected for non app-bound domain" → harmlos, nur lokal. Auf GitHub Pages
   (HTTPS) funktioniert er normal.
 - Stufen-Faktoren (0.5 / 0.25) sind Annahmen; manche Grills regeln "Klein" eher auf ~15%.
-- Brenner-Verbrauchswerte (DEFAULT_BURNERS) sind BTU→g/h-Schätzwerte, noch nicht kalibriert.
+- Brenner-Verbrauchswerte (DEFAULT_BURNERS) sind größtenteils BTU→g/h-Schätzwerte, noch
+  nicht einzeln kalibriert (außer Heckbrenner, siehe Kalibrierung unten).
   1. Test-Session (2026-06-26) zeigte ~264 g/h/Hauptbrenner als grob plausibel — der
   alte Timer-Bug (setInterval statt Zeitstempel) war der eigentliche Messfehler, nicht
   die Brennerwerte. Nächste Session mit korrektem Tracking liefert exakte Kalibrierdaten.
+
+## Kalibrierung Heckbrenner (2026-07-05)
+Session am 04.07. (~2,5h Heckbrenner, gemischt Mittel/Voll) wurde durch einen versehentlichen
+Backup-Restore in der App-Historie zerrissen (nur 37 Min. digital erfasst). Die echte Wiegung
+davor/danach ist trotzdem verlässlich: 6,90 kg (29.06.) → 6,35 kg (04.07.) = **550 g realer
+Verbrauch** über die komplette Session. Bei angenommenem ~50/50-Split Mittel/Voll über die 2,5h
+ergibt sich ein Vollgas-Wert von ~293 g/h (gerundet 290), statt der bisherigen 319 g/h (reiner
+BTU-Sollwert). Unsicherheit: exakter Mittel/Voll-Zeit-Split unbekannt, plus unklare Zusatzzeit
+durch den Neustart nach dem Backup-Unfall — für exaktere Zahlen braucht es einen sauberen
+Einzeltest (1 Brenner, 1 Stufe, exakte Zeit, vorher/nachher gewogen, keine Backup-Störung).
 
 ## Mögliche nächste Schritte
 - Verbrauchswerte nach echten Test-Sessions feinkalibrieren (vorher/nachher wiegen + Backup)

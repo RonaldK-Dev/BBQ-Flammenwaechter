@@ -1,6 +1,6 @@
 # 🔥 Flammenwächter
 
-Gasflaschen-Tracker für BBQ-Lab. Füllstand per Gewicht berechnen, Grillverbrauch pro Session schätzen (abgestimmt auf Napoleon Rogue SE 525), mehrere Flaschen verwalten.
+Gasflaschen-Tracker für BBQ-Lab. Füllstand per Gewicht berechnen, Grillverbrauch pro Session schätzen (abgestimmt auf Napoleon Rogue PRO-S 525), mehrere Flaschen verwalten.
 
 ## Features
 - Füllstand per Gewicht (Leer / Voll / Aktuell) mit Zeigeranzeige
