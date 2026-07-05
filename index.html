@@ -972,18 +972,38 @@ function GrillModal({ bottle, onFinish, onCancel }) {
 
 function SessionRow({ session: s, onDelete }) {
   const [dx, setDx] = useState(0);
+  const dxLive = useRef(0);
   const startX = useRef(null);
   const baseDx = useRef(0);
+  const dragging = useRef(false);
   const OPEN = -92;
-  function onTouchStart(e) { startX.current = e.touches[0].clientX; baseDx.current = dx; }
-  function onTouchMove(e) {
-    if (startX.current == null) return;
-    let next = baseDx.current + (e.touches[0].clientX - startX.current);
+  // Pointer-Events statt Touch-Events: so funktioniert das Wischen per Touch
+  // UND per Maus-Ziehen im Desktop-Browser (Touch-Events feuern dort nie).
+  // dxLive (Ref) statt State "dx" in onPointerUp lesen: bei schnellen/gebatchten
+  // Events kann der State-Closure-Wert noch veraltet sein, wenn Up direkt nach
+  // Move feuert -> Karte würde faelschlich auf 0 zurueckspringen.
+  function onPointerDown(e) {
+    dragging.current = true;
+    startX.current = e.clientX;
+    baseDx.current = dxLive.current;
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }
+  function onPointerMove(e) {
+    if (!dragging.current) return;
+    let next = baseDx.current + (e.clientX - startX.current);
     if (next > 0) next = 0;
     if (next < OPEN) next = OPEN;
+    dxLive.current = next;
     setDx(next);
   }
-  function onTouchEnd() { setDx(dx < OPEN / 2 ? OPEN : 0); startX.current = null; }
+  function onPointerUp() {
+    if (!dragging.current) return;
+    dragging.current = false;
+    const next = dxLive.current < OPEN / 2 ? OPEN : 0;
+    dxLive.current = next;
+    setDx(next);
+    startX.current = null;
+  }
   return (
     <div style={{ position: "relative", borderRadius: 12, overflow: "hidden" }}>
       <button
@@ -993,10 +1013,11 @@ function SessionRow({ session: s, onDelete }) {
         <span style={{ fontSize: 18 }}>🗑</span> Löschen
       </button>
       <div
-        onTouchStart={onTouchStart}
-        onTouchMove={onTouchMove}
-        onTouchEnd={onTouchEnd}
-        style={{ position: "relative", background: "#2C2C2E", borderRadius: 12, padding: "12px 14px", fontFamily: "system-ui", transform: `translateX(${dx}px)`, transition: startX.current == null ? "transform 0.2s ease" : "none", touchAction: "pan-y" }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+        style={{ position: "relative", background: "#2C2C2E", borderRadius: 12, padding: "12px 14px", fontFamily: "system-ui", transform: `translateX(${dx}px)`, transition: dragging.current ? "none" : "transform 0.2s ease", touchAction: "pan-y", cursor: "grab" }}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span style={{ color: "#F2F2F7", fontSize: 14, fontWeight: 600 }}>
