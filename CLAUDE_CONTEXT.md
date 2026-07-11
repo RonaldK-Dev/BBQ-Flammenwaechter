@@ -18,6 +18,7 @@ Napoleon Rogue PRO-S 525 RSIB (4 Hauptbrenner + Heckbrenner + Sizzle Zone).
 - Vor größeren Änderungen warnen
 - Bestehende Daten NIE verlieren
 - localStorage-Key NIEMALS ändern: `gas-bottle-tracker-v1`
+  (zweiter Key `gas-bottle-tracker-v1-grill-draft` für den Session-Entwurf, siehe unten)
 - Sprache: Deutsch
 - Kostengünstig/DIY bevorzugt (GitHub Pages statt Netlify wg. Credits)
 
@@ -68,6 +69,18 @@ Array von bottle-Objekten:
    - Live-Verbrauch g/h, zieht beim Speichern geschätztes Gas vom currentWeight ab
    - Abbrechen-/Start-Button: transparenter "glasiger" Look
    - Tacho-Labels "0" / "100%" sauber unter den Bogenenden positioniert
+   - **Absturzsicher (seit 2026-07-11):** Laufende Session wird bei jeder Brenner-
+     Aktion + zusätzlich beim Verstecken der Seite (`visibilitychange`/`pagehide`)
+     + alle 20s als Fallback in einem eigenen localStorage-Key
+     (`gas-bottle-tracker-v1-grill-draft`) gesichert. Killt iOS die PWA (Bildschirm
+     aus/Hintergrund) oder trifft ein Fingertipp aus Versehen den Modal-Backdrop,
+     wird beim nächsten Öffnen von "Grillen" für dieselbe Flasche der Entwurf
+     erkannt und kann per Bestätigungsdialog fortgesetzt werden (Zeit, Brennerstufen
+     und kumulierte Gramm exakt wiederhergestellt, zeitstempel-basiert). Der
+     Entwurf wird beim Speichern und beim bestätigten Abbrechen gelöscht.
+   - **Abbrechen-Sicherheitsabfrage:** sobald schon Zeit/Gas erfasst wurde
+     (elapsed > 0), fragt der Abbrechen-Button per `window.confirm` nach, bevor
+     die Session verworfen wird — verhindert Datenverlust durch Ghost-Touch.
 5. Session-Verlauf pro Flasche mit Statistik (Anzahl, Gesamt-Gas, Gesamt-Zeit)
    - Karten zeigen Datum + Uhrzeit (mehrere Sessions/Tag bleiben unterscheidbar)
    - Swipe-links auf einer Session-Karte (SessionRow) enthüllt "🗑 Löschen" → mit

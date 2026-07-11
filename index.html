@@ -43,6 +43,31 @@ const { useState, useEffect, useRef } = React;
 
 const STORAGE_KEY = "gas-bottle-tracker-v1";
 
+// Laufende, noch nicht gespeicherte Grill-Session als Entwurf sichern.
+// Schützt vor Datenverlust wenn iOS die PWA killt (Bildschirm aus/Hintergrund)
+// oder ein Fingertipp aus Versehen den Modal-Backdrop trifft: beim nächsten
+// Öffnen von "Grillen" für dieselbe Flasche wird der Entwurf erkannt und
+// kann fortgesetzt werden, statt verloren zu gehen.
+const GRILL_DRAFT_KEY = "gas-bottle-tracker-v1-grill-draft";
+function loadGrillDraft() {
+  try {
+    const raw = localStorage.getItem(GRILL_DRAFT_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+function saveGrillDraft(draft) {
+  try {
+    localStorage.setItem(GRILL_DRAFT_KEY, JSON.stringify(draft));
+  } catch {}
+}
+function clearGrillDraft() {
+  try {
+    localStorage.removeItem(GRILL_DRAFT_KEY);
+  } catch {}
+}
+
 const GAS_TYPES = [
   { label: "Propan", color: "#FF6B35" },
   { label: "Butan", color: "#4ECDC4" },
@@ -710,8 +735,61 @@ function GrillModal({ bottle, onFinish, onCancel }) {
   const segStartRef = useRef(null);         // ms-Zeitstempel des laufenden Segments
   const accRef = useRef({ seconds: 0, grams: 0, perBurner: {} }); // über Segmente kumuliert
   const tickRef = useRef(null);
+  const draftTickRef = useRef(null);
 
   const currentGas = Math.max(0, bottle.currentWeight - bottle.emptyWeight);
+
+  // Entwurf einer noch laufenden Session für diese Flasche wiederherstellen
+  // (z.B. nach App-Neustart durch iOS-Kill während Bildschirm-aus).
+  useEffect(() => {
+    const draft = loadGrillDraft();
+    if (!draft || draft.bottleId !== bottle.id) return;
+    const when = new Date(draft.startedAt).toLocaleTimeString("de-AT", { hour: "2-digit", minute: "2-digit" });
+    const resume = window.confirm(
+      `Es gibt noch eine nicht gespeicherte Grill-Session von ${when} (${Math.round(draft.acc.grams)} g bisher erfasst).\n\nFortsetzen?`
+    );
+    if (resume) {
+      startedAtRef.current = draft.startedAt;
+      accRef.current = draft.acc;
+      segStartRef.current = draft.running ? draft.segStart : null;
+      setActiveBurners(draft.activeBurners);
+      setRunning(draft.running);
+      forceTick((t) => t + 1);
+    } else {
+      clearGrillDraft();
+    }
+    // nur einmal beim Öffnen des Modals prüfen
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function persistDraft(ab, r) {
+    if (!startedAtRef.current) return; // noch nicht gestartet -> nichts zu sichern
+    saveGrillDraft({
+      bottleId: bottle.id,
+      startedAt: startedAtRef.current,
+      activeBurners: ab,
+      running: r,
+      segStart: segStartRef.current,
+      acc: accRef.current,
+    });
+  }
+
+  // Letzte Rettung bevor iOS die Seite beim Ausgehen des Bildschirms killt:
+  // visibilitychange/pagehide feuern zuverlässig VOR dem Einfrieren/Beenden,
+  // beforeunload dagegen nicht auf Mobile.
+  useEffect(() => {
+    function handleHide(e) {
+      if (e.type === "visibilitychange" && document.visibilityState !== "hidden") return;
+      if (running) flushSegment();
+      persistDraft(activeBurners, running);
+    }
+    document.addEventListener("visibilitychange", handleHide);
+    window.addEventListener("pagehide", handleHide);
+    return () => {
+      document.removeEventListener("visibilitychange", handleHide);
+      window.removeEventListener("pagehide", handleHide);
+    };
+  }, [running, activeBurners]);
 
   // Aktueller Verbrauch pro Stunde (mit Brennstufe)
   const gramsPerHour = DEFAULT_BURNERS.reduce(
@@ -750,14 +828,26 @@ function GrillModal({ bottle, onFinish, onCancel }) {
   }
 
   // Anzeige jede Sekunde auffrischen (reiner Re-Render; gerechnet wird über Zeitstempel)
+  // + alle 20s zusätzlich den Entwurf sichern, als Fallback falls visibilitychange
+  // auf manchen Geräten nicht rechtzeitig feuert bevor die Seite eingefroren wird.
   useEffect(() => {
-    if (running) tickRef.current = setInterval(() => forceTick((t) => t + 1), 1000);
-    return () => clearInterval(tickRef.current);
-  }, [running]);
+    if (running) {
+      tickRef.current = setInterval(() => forceTick((t) => t + 1), 1000);
+      draftTickRef.current = setInterval(() => persistDraft(activeBurners, true), 20000);
+    }
+    return () => {
+      clearInterval(tickRef.current);
+      clearInterval(draftTickRef.current);
+    };
+  }, [running, activeBurners]);
 
   function toggleBurner(id) {
     if (running) flushSegment(); // alte Stufe bis jetzt verbuchen, dann umstellen
-    setActiveBurners((prev) => ({ ...prev, [id]: nextLevel(prev[id]) }));
+    setActiveBurners((prev) => {
+      const next = { ...prev, [id]: nextLevel(prev[id]) };
+      persistDraft(next, running);
+      return next;
+    });
   }
 
   function applyPreset(preset) {
@@ -765,6 +855,7 @@ function GrillModal({ bottle, onFinish, onCancel }) {
     const next = { b1: "off", b2: "off", b3: "off", b4: "off", rear: "off", sizzle: "off" };
     preset.burners.forEach((id) => { next[id] = "full"; });
     setActiveBurners(next);
+    persistDraft(next, running);
   }
 
   function handleStart() {
@@ -772,22 +863,26 @@ function GrillModal({ bottle, onFinish, onCancel }) {
     if (!startedAtRef.current) startedAtRef.current = new Date().toISOString();
     segStartRef.current = Date.now();
     setRunning(true);
+    persistDraft(activeBurners, true);
   }
 
   function handleStop() {
     flushSegment();
     segStartRef.current = null;
     setRunning(false);
+    persistDraft(activeBurners, false);
   }
 
   function handleResume() {
     segStartRef.current = Date.now();
     setRunning(true);
+    persistDraft(activeBurners, true);
   }
 
   function handleSave() {
     if (running) flushSegment();
     const pb = accRef.current.perBurner;
+    clearGrillDraft();
     onFinish({
       id: Date.now().toString(),
       date: startedAtRef.current || new Date().toISOString(),
@@ -795,6 +890,17 @@ function GrillModal({ bottle, onFinish, onCancel }) {
       consumedKg: accRef.current.grams / 1000,
       burners: DEFAULT_BURNERS.filter((b) => (pb[b.label] || 0) > 0).map((b) => ({ label: b.label, grams: Math.round(pb[b.label]) })),
     });
+  }
+
+  function handleCancel() {
+    if (elapsed > 0) {
+      const ok = window.confirm(
+        `Laufende Session verwerfen?\n\n${consumed.toFixed(0)} g sind bisher erfasst und gehen verloren.`
+      );
+      if (!ok) return;
+    }
+    clearGrillDraft();
+    onCancel();
   }
 
   const elapsed = liveSeconds();
@@ -959,7 +1065,7 @@ function GrillModal({ bottle, onFinish, onCancel }) {
         </div>
       )}
 
-      <button onClick={onCancel} style={{ ...cancelBtn, width: "100%", marginTop: 10, flex: "none" }}>
+      <button onClick={handleCancel} style={{ ...cancelBtn, width: "100%", marginTop: 10, flex: "none" }}>
         Abbrechen
       </button>
 
