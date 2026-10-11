@@ -25,7 +25,7 @@ Napoleon Rogue PRO-S 525 RSIB (4 Hauptbrenner + Heckbrenner + Sizzle Zone).
 ## Dateien im Repo
 - index.html              → komplette App (React-Code im <script type="text/babel">)
 - manifest.json           → start_url & scope = /BBQ-Flammenwaechter/
-- sw.js                   → Service Worker, Cache-Name "flammenwaechter-v7" (bei jedem Release hochzählen)
+- sw.js                   → Service Worker, Cache-Name "flammenwaechter-v8" (bei jedem Release hochzählen)
 - icon.svg                → Quelldatei (Flammen-Monster, BBQ-Lab Stil)
 - icon-192.png / icon-512.png / icon-180.png / apple-touch-icon.png
 - favicon.png / favicon-16.png
@@ -128,7 +128,9 @@ Array von bottle-Objekten:
      Füllung noch keine Session liegt (Fehl-Tipp). Stellt Gewicht, Tara und Wiege-Datum der
      alten Flasche aus dem `refills`-Eintrag wieder her und entfernt ihn. Nach der ersten
      Session der neuen Füllung gibt es den Knopf nicht mehr
-10. **Fokus: aktive Flasche (seit 2026-10-11):** nur bei 2+ Flaschen sichtbar.
+10. **Fokus: aktive Flasche (seit 2026-10-11):** Eine einzelne Flasche gilt immer als
+   „Am Grill" (Badge und grüner Rahmen), `save()` schreibt ihr `active: true` fest, sobald
+   nur noch eine Flasche in Gebrauch ist. Die Auswahl gibt es erst ab 2 Flaschen.
    - Genau eine Flasche trägt `active: true`: grünes Badge „🔥 Am Grill", grüner Rahmen (#34C759, linke Kante bleibt Gastyp-Farbe), steht
      in der Liste ganz oben. Die anderen zeigen „Reserve" und den Knopf „🎯 Jetzt am Grill"
    - Solange keine gewählt ist, steht oben ein Hinweis und jede Karte hat den Knopf

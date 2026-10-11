@@ -1,5 +1,5 @@
 // Flammenwächter Service Worker
-const CACHE_NAME = "flammenwaechter-v7";
+const CACHE_NAME = "flammenwaechter-v8";
 const ASSETS = [
   "./",
   "./index.html",

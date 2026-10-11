@@ -245,8 +245,8 @@ function GaugeArc({ pct }) {
   );
 }
 
-// focus: "active" (hängt am Grill), "reserve", "none" (mehrere Flaschen, noch keine
-// gewählt) oder null (nur eine Flasche -> keine Markierung nötig)
+// focus: "active" (hängt am Grill, auch die einzige Flasche), "reserve" oder
+// "none" (mehrere Flaschen, noch keine gewählt)
 // reserve: beste Reserve-Flasche mit genug Gas (oder null) -> für die Reserve-Warnung
 function BottleCard({ bottle, forecast, focus, reserve, onSetActive, onEdit, onArchive, onDelete, onWeigh, onSwap, onGrill, onHistory }) {
   const gasKg = bottle.fullWeight - bottle.emptyWeight;
@@ -266,7 +266,7 @@ function BottleCard({ bottle, forecast, focus, reserve, onSetActive, onEdit, onA
   // fast leer ist und im Ernstfall nicht weit trägt.
   const showReserveWarning = isLowOnGas(bottle, forecast);
   const isBackup = focus === "reserve";
-  const warnColor = isBackup || focus === "none" || reserve ? "#FF9F0A" : "#FF3B30";
+  const warnColor = isBackup || focus === "none" || reserve ? "#FF9F0A" : "#FF3B30"; // rot: am Grill und keine Reserve
 
   return (
     <div
@@ -1477,7 +1477,13 @@ function App() {
     } catch {}
   }, []);
 
-  function save(updated) {
+  function save(next) {
+    // Ist nur eine Flasche in Gebrauch, hängt sie am Grill: Markierung festschreiben,
+    // damit sie bleibt, wenn später eine zweite dazukommt oder aus dem Archiv zurückkehrt.
+    const inUse = next.filter((b) => !b.archived);
+    const updated = inUse.length === 1 && !inUse[0].active
+      ? next.map((b) => (b.id === inUse[0].id ? { ...b, active: true } : b))
+      : next;
     setBottles(updated);
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
@@ -1485,7 +1491,11 @@ function App() {
   }
 
   function handleAdd(bottle) {
-    save([...bottles, bottle]);
+    // Die bisher einzige Flasche wurde schon als "Am Grill" angezeigt -> das bleibt so,
+    // die neue kommt als Reserve dazu (umschalten per "Jetzt am Grill").
+    const inUse = bottles.filter((b) => !b.archived);
+    const base = inUse.length === 1 ? bottles.map((b) => (b.id === inUse[0].id ? { ...b, active: true } : b)) : bottles;
+    save([...base, bottle]);
     setShowAdd(false);
   }
   function handleEdit(bottle) {
@@ -1677,7 +1687,8 @@ function App() {
   // Archivierte Flaschen sind aus Liste, Fokus und Gas-Bestand raus (Sessions zählen weiter für die Prognose)
   const visibleBottles = bottles.filter((b) => !b.archived);
   const archivedBottles = bottles.filter((b) => b.archived);
-  const activeId = visibleBottles.length > 1 ? (visibleBottles.find((b) => b.active) || {}).id : undefined;
+  // Eine einzelne Flasche gilt immer als "am Grill", auch wenn die Markierung noch nicht gespeichert ist
+  const activeId = visibleBottles.length === 1 ? visibleBottles[0].id : (visibleBottles.find((b) => b.active) || {}).id;
   // aktive Flasche zuerst, Rest in gewohnter Reihenfolge
   const sortedBottles = activeId ? [...visibleBottles].sort((a, b) => (b.id === activeId) - (a.id === activeId)) : visibleBottles;
   const totalGasKg = visibleBottles.reduce((sum, b) => sum + Math.max(0, b.currentWeight - b.emptyWeight), 0);
@@ -1732,7 +1743,7 @@ function App() {
               reserve={visibleBottles
                 .filter((b) => b.id !== bottle.id && !isLowOnGas(b, forecastBasis))
                 .sort((a, b) => (b.currentWeight - b.emptyWeight) - (a.currentWeight - a.emptyWeight))[0] || null}
-              focus={visibleBottles.length < 2 ? null : !activeId ? "none" : bottle.id === activeId ? "active" : "reserve"}
+              focus={!activeId ? "none" : bottle.id === activeId ? "active" : "reserve"}
               onSetActive={handleSetActive}
               onEdit={setEditBottle}
               onArchive={handleArchive}
