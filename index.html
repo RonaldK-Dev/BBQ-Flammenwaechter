@@ -159,9 +159,24 @@ function getForecastBasis(bottles) {
 
 // Füllungen: jeder Flaschentausch (bottle.refills) startet eine neue Füllung.
 // Liefert 0 für Sessions vor dem ersten Tausch, 1 nach dem ersten usw.
+// Neue Sessions tragen ihre Füllung fest in session.filling (gesetzt beim Speichern).
+// Das Datum allein reicht nicht: es ist die STARTzeit, eine über einen Tausch hinweg
+// fortgesetzte Session würde sonst der alten Füllung zugerechnet. Alte Sessions ohne
+// das Feld werden weiter über ihr Datum zugeordnet.
 function fillingIndex(bottle, session) {
+  const refills = bottle.refills || [];
+  if (Number.isInteger(session.filling)) return Math.min(session.filling, refills.length);
   const when = new Date(session.date);
-  return (bottle.refills || []).filter((r) => new Date(r.date) <= when).length;
+  return refills.filter((r) => new Date(r.date) <= when).length;
+}
+
+// "Knapp": das Gas reicht höchstens noch für eine Session. Ohne Session-Historie
+// gilt ersatzweise die rote Füllstand-Schwelle (15 %).
+function isLowOnGas(bottle, forecast) {
+  const gas = Math.max(0, bottle.currentWeight - bottle.emptyWeight);
+  if (forecast) return gas < 2 * forecast.avgSessionKg;
+  const capacity = bottle.fullWeight - bottle.emptyWeight;
+  return capacity > 0 ? gas / capacity <= 0.15 : true;
 }
 
 function formatReach(hours) {
@@ -230,7 +245,10 @@ function GaugeArc({ pct }) {
   );
 }
 
-function BottleCard({ bottle, forecast, onEdit, onDelete, onWeigh, onSwap, onGrill, onHistory }) {
+// focus: "active" (hängt am Grill), "reserve", "none" (mehrere Flaschen, noch keine
+// gewählt) oder null (nur eine Flasche -> keine Markierung nötig)
+// reserve: beste Reserve-Flasche mit genug Gas (oder null) -> für die Reserve-Warnung
+function BottleCard({ bottle, forecast, focus, reserve, onSetActive, onEdit, onDelete, onWeigh, onSwap, onGrill, onHistory }) {
   const gasKg = bottle.fullWeight - bottle.emptyWeight;
   const currentGas = Math.max(0, bottle.currentWeight - bottle.emptyWeight);
   const pct = gasKg > 0 ? Math.min(100, Math.round((currentGas / gasKg) * 100)) : 0;
@@ -243,6 +261,9 @@ function BottleCard({ bottle, forecast, onEdit, onDelete, onWeigh, onSwap, onGri
   // Sessions abgerundet: lieber eine zu wenig versprechen als mit leerer Flasche dastehen
   const sessionsLeft = forecast ? Math.floor(currentGas / forecast.avgSessionKg) : 0;
   const hoursLeft = forecast ? (currentGas * 1000) / forecast.gramsPerHour : 0;
+  // Warnen nur bei der Flasche am Grill bzw. bei der einzigen Flasche
+  const showReserveWarning = (focus === "active" || focus === null) && isLowOnGas(bottle, forecast);
+  const warnColor = reserve ? "#FF9F0A" : "#FF3B30";
 
   return (
     <div
@@ -251,7 +272,9 @@ function BottleCard({ bottle, forecast, onEdit, onDelete, onWeigh, onSwap, onGri
         borderRadius: 20,
         padding: "20px",
         marginBottom: 16,
-        border: `1px solid #2C2C2E`,
+        border: focus === "active" ? "1.5px solid #34C759" : "1px solid #2C2C2E",
+        // links gehört die Kante dem Gastyp-Streifen, dort kein Grün durchscheinen lassen
+        borderLeftColor: focus === "active" ? gasType.color : "#2C2C2E",
         position: "relative",
         overflow: "hidden",
       }}
@@ -286,6 +309,16 @@ function BottleCard({ bottle, forecast, onEdit, onDelete, onWeigh, onSwap, onGri
             >
               {bottle.gasType}
             </span>
+            {focus === "active" && (
+              <span style={{ background: "#34C75922", color: "#34C759", borderRadius: 8, padding: "1px 8px", fontSize: 11, fontWeight: 700, fontFamily: "system-ui" }}>
+                🔥 Am Grill
+              </span>
+            )}
+            {focus === "reserve" && (
+              <span style={{ background: "#3A3A3C", color: "#8E8E93", borderRadius: 8, padding: "1px 8px", fontSize: 11, fontWeight: 600, fontFamily: "system-ui" }}>
+                Reserve
+              </span>
+            )}
           </div>
           <div style={{ color: color, fontSize: 13, fontWeight: 600, fontFamily: "system-ui" }}>
             {getLevelLabel(pct)}
@@ -337,6 +370,17 @@ function BottleCard({ bottle, forecast, onEdit, onDelete, onWeigh, onSwap, onGri
             Ø {Math.round(forecast.avgSessionKg * 1000)} g pro Session, {Math.round(forecast.gramsPerHour)} g/h
             {" "}(letzte {forecast.count === 1 ? "Session" : `${forecast.count} Sessions`})
           </div>
+        </div>
+      )}
+
+      {/* Reserve-Warnung */}
+      {showReserveWarning && (
+        <div style={{ marginTop: 12, background: warnColor + "18", border: `1px solid ${warnColor}40`, borderRadius: 12, padding: "10px 14px", color: warnColor, fontSize: 13, fontWeight: 600, fontFamily: "system-ui", lineHeight: 1.4 }}>
+          ⚠️ {forecast && sessionsLeft >= 1 ? "Reicht nur noch für etwa eine Session." : forecast ? "Reicht nicht mehr für eine ganze Session." : "Die Flasche ist fast leer."}
+          {" "}
+          {reserve
+            ? `Reserve bereitstellen: „${reserve.name}“ (${formatKg(Math.max(0, reserve.currentWeight - reserve.emptyWeight))} Gas).`
+            : "Keine volle Reserve da, neue Flasche besorgen."}
         </div>
       )}
 
@@ -412,9 +456,16 @@ function BottleCard({ bottle, forecast, onEdit, onDelete, onWeigh, onSwap, onGri
           🔥 Grillen
         </button>
       </div>
-      <button onClick={() => onSwap(bottle)} style={{ ...dataBtn, width: "100%", marginTop: 10, flex: "none" }}>
-        <span aria-hidden="true">🔄</span> Flasche getauscht
-      </button>
+      <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+        {(focus === "reserve" || focus === "none") && (
+          <button onClick={() => onSetActive(bottle)} style={dataBtn}>
+            <span aria-hidden="true">🎯</span> Jetzt am Grill
+          </button>
+        )}
+        <button onClick={() => onSwap(bottle)} style={dataBtn}>
+          <span aria-hidden="true">🔄</span> Flasche getauscht
+        </button>
+      </div>
     </div>
   );
 }
@@ -809,6 +860,15 @@ function SwapModal({ bottle, onSave, onCancel }) {
     if (!weightTouched && parseFloat(v) > 0) setWeight(String(Number((parseFloat(v) + gasKg).toFixed(2))));
   }
   function onWeight(v) { setWeight(v); setWeightTouched(true); }
+  // Schutz vor Tippfehlern (119 statt 11.9): bei unplausiblen Werten nachfragen
+  function handleSave() {
+    if (!isValid) return;
+    const over = w - (empty + gasKg);
+    const taraOff = Math.abs(empty - bottle.emptyWeight) > bottle.emptyWeight * 0.5;
+    if (over > 0.5 && !window.confirm(`${formatKg(w)} liegt ${formatKg(over)} über dem Vollgewicht (${formatKg(empty + gasKg)}).\n\nStimmt die Eingabe?`)) return;
+    if (taraOff && !window.confirm(`Das Leergewicht ${formatKg(empty)} weicht stark vom bisherigen (${formatKg(bottle.emptyWeight)}) ab.\n\nStimmt die Eingabe?`)) return;
+    onSave({ weight: w, emptyWeight: empty });
+  }
 
   return (
     <div>
@@ -831,7 +891,7 @@ function SwapModal({ bottle, onSave, onCancel }) {
       <div style={{ display: "flex", gap: 10 }}>
         <button onClick={onCancel} style={cancelBtn}>Abbrechen</button>
         <button
-          onClick={() => isValid && onSave({ weight: w, emptyWeight: empty })}
+          onClick={handleSave}
           disabled={!isValid}
           style={{ ...primaryBtn, flex: 2, background: isValid ? "#FF6B35" : "#2C2C2E", color: isValid ? "#fff" : "#48484A", cursor: isValid ? "pointer" : "not-allowed" }}
         >
@@ -1274,7 +1334,8 @@ function HistoryModal({ bottle, onCancel, onDeleteSession, onUndoSwap }) {
   // Rückgängig nur solange in der neuen Füllung noch nicht gegrillt wurde (Fehl-Tipp).
   // Danach wäre der alte Stand falsch, weil die Sessions schon von der neuen Flasche abgezogen sind.
   const lastRefill = refills[refills.length - 1];
-  const canUndoSwap = !!lastRefill && groups[0].sessions.length === 0;
+  const canUndoSwap = !!lastRefill && groups[0].sessions.length === 0
+    && Number.isFinite(lastRefill.previousWeight) && Number.isFinite(lastRefill.previousEmptyWeight);
   function confirmUndoSwap() {
     if (window.confirm(`Tausch vom ${shortDate(lastRefill.date)} zurücknehmen?\n\nDer Füllstand wird wieder auf ${formatKg(lastRefill.previousWeight)} gesetzt (Stand vor dem Tausch).`)) {
       onUndoSwap();
@@ -1390,6 +1451,28 @@ function App() {
     save(bottles.map((b) => (b.id === id ? { ...b, currentWeight: weight, lastWeighed: new Date().toISOString() } : b)));
     setWeighBottle(null);
   }
+  // Fokus: bei mehreren Flaschen ist genau eine als "am Grill" markiert (bottle.active)
+  function handleSetActive(bottle) {
+    save(bottles.map((b) => ({ ...b, active: b.id === bottle.id })));
+  }
+  // Grillen mit einer Flasche, die nicht am Grill hängt: nachfragen (Schutz vor
+  // Verwechslung), dann wird sie zur aktiven Flasche.
+  function handleGrillRequest(bottle) {
+    if (bottles.length > 1 && bottle.id !== activeId) {
+      const current = bottles.find((b) => b.id === activeId);
+      if (current && !window.confirm(`Am Grill hängt laut App „${current.name}“.\n\nJetzt mit „${bottle.name}“ grillen und sie als aktive Flasche setzen?`)) return;
+      handleSetActive(bottle);
+    }
+    setGrillBottle(bottle);
+  }
+  function handleSwapRequest(bottle) {
+    const draft = loadGrillDraft();
+    if (draft && draft.bottleId === bottle.id) {
+      alert(`Für „${bottle.name}“ ist noch eine Grill-Session offen.\n\nBitte erst unter „Grillen“ fortsetzen und speichern (oder verwerfen), dann den Tausch eintragen.`);
+      return;
+    }
+    setSwapBottle(bottle);
+  }
   function handleSwap(id, { weight, emptyWeight }) {
     const now = new Date().toISOString();
     save(
@@ -1416,7 +1499,7 @@ function App() {
       if (b.id !== id) return b;
       const refills = b.refills || [];
       const last = refills[refills.length - 1];
-      if (!last) return (updatedBottle = b);
+      if (!last || !Number.isFinite(last.previousWeight) || !Number.isFinite(last.previousEmptyWeight)) return (updatedBottle = b);
       const gasKg = b.fullWeight - b.emptyWeight;
       updatedBottle = {
         ...b,
@@ -1440,7 +1523,7 @@ function App() {
         return {
           ...b,
           currentWeight: Math.round(newCurrent * 100) / 100,
-          sessions: [...(b.sessions || []), session],
+          sessions: [...(b.sessions || []), { ...session, filling: (b.refills || []).length }],
         };
       })
     );
@@ -1489,8 +1572,12 @@ function App() {
         // Merge nach id: bestehende aktualisieren, neue ergänzen — kein Datenverlust
         const byId = {};
         bottles.forEach((b) => { byId[b.id] = b; });
-        valid.forEach((b) => { byId[b.id] = b; });
-        save(Object.values(byId));
+        // Backups von vor der Fokus-Funktion kennen "active" nicht -> bisherige Markierung behalten
+        valid.forEach((b) => { byId[b.id] = b.active === undefined && byId[b.id] ? { ...b, active: byId[b.id].active } : b; });
+        // Nach dem Merge darf höchstens eine Flasche "am Grill" sein: die bisherige gewinnt
+        const merged = Object.values(byId);
+        const keep = (merged.find((b) => b.active && b.id === activeId) || merged.find((b) => b.active) || {}).id;
+        save(merged.map((b) => (b.active && b.id !== keep ? { ...b, active: false } : b)));
         alert(`${valid.length} Flasche(n) importiert.`);
       } catch (err) {
         alert("Import fehlgeschlagen: " + err.message);
@@ -1501,6 +1588,9 @@ function App() {
   }
 
   const forecastBasis = getForecastBasis(bottles);
+  const activeId = bottles.length > 1 ? (bottles.find((b) => b.active) || {}).id : undefined;
+  // aktive Flasche zuerst, Rest in gewohnter Reihenfolge
+  const sortedBottles = activeId ? [...bottles].sort((a, b) => (b.id === activeId) - (a.id === activeId)) : bottles;
   const totalGasKg = bottles.reduce((sum, b) => sum + Math.max(0, b.currentWeight - b.emptyWeight), 0);
 
   return (
@@ -1539,19 +1629,31 @@ function App() {
             </div>
           </div>
         ) : (
-          bottles.map((bottle) => (
+          <React.Fragment>
+          {bottles.length > 1 && !activeId && (
+            <div style={{ background: "#1C1C1E", border: "1px solid #FF6B3540", borderRadius: 14, padding: "12px 14px", marginBottom: 16, color: "#F2F2F7", fontSize: 13, lineHeight: 1.4 }}>
+              Welche Flasche hängt gerade am Grill? Tippe bei ihr auf „🎯 Jetzt am Grill“.
+            </div>
+          )}
+          {sortedBottles.map((bottle) => (
             <BottleCard
               key={bottle.id}
               bottle={bottle}
               forecast={forecastBasis}
+              reserve={bottles
+                .filter((b) => b.id !== bottle.id && !isLowOnGas(b, forecastBasis))
+                .sort((a, b) => (b.currentWeight - b.emptyWeight) - (a.currentWeight - a.emptyWeight))[0] || null}
+              focus={bottles.length < 2 ? null : !activeId ? "none" : bottle.id === activeId ? "active" : "reserve"}
+              onSetActive={handleSetActive}
               onEdit={setEditBottle}
               onDelete={handleDelete}
               onWeigh={setWeighBottle}
-              onSwap={setSwapBottle}
-              onGrill={setGrillBottle}
+              onSwap={handleSwapRequest}
+              onGrill={handleGrillRequest}
               onHistory={setHistoryBottle}
             />
-          ))
+          ))}
+          </React.Fragment>
         )}
 
         <button

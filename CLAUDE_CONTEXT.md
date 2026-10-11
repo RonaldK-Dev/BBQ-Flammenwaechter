@@ -25,7 +25,7 @@ Napoleon Rogue PRO-S 525 RSIB (4 Hauptbrenner + Heckbrenner + Sizzle Zone).
 ## Dateien im Repo
 - index.html              → komplette App (React-Code im <script type="text/babel">)
 - manifest.json           → start_url & scope = /BBQ-Flammenwaechter/
-- sw.js                   → Service Worker, Cache-Name "flammenwaechter-v5" (bei jedem Release hochzählen)
+- sw.js                   → Service Worker, Cache-Name "flammenwaechter-v6" (bei jedem Release hochzählen)
 - icon.svg                → Quelldatei (Flammen-Monster, BBQ-Lab Stil)
 - icon-192.png / icon-512.png / icon-180.png / apple-touch-icon.png
 - favicon.png / favicon-16.png
@@ -43,13 +43,15 @@ Array von bottle-Objekten:
   fullWeight: number,    // kg, Voll = Leer + Gasmenge
   currentWeight: number, // kg, aktuell gewogen
   lastWeighed: ISO-string,
+  active: boolean,       // optional, true = hängt am Grill (seit 2026-10-11), höchstens eine Flasche
   sessions: [
     {
       id: string,
       date: ISO-string,
       durationSeconds: number,
       consumedKg: number,
-      burners: [{ label: string, grams: number }]   // pro Brenner kumulierte Gramm über alle Stufenwechsel
+      burners: [{ label: string, grams: number }],  // pro Brenner kumulierte Gramm über alle Stufenwechsel
+      filling: number    // optional (seit 2026-10-11): Füllung, in der die Session gespeichert wurde (0 = vor dem ersten Tausch)
     }
   ],
   refills: [             // optional, ein Eintrag pro Flaschentausch (seit 2026-10-11)
@@ -113,7 +115,10 @@ Array von bottle-Objekten:
    das SwapModal (Gewicht der neuen Flasche, vorbelegt mit Vollgewicht, und Tara).
    - Der Eintrag bleibt derselbe, alle Sessions bleiben erhalten, `refills` bekommt einen Eintrag
    - Geänderte Tara verschiebt `fullWeight` mit (Gasmenge bleibt gleich)
-   - Füllungen (`fillingIndex`): Sessions werden über ihr Datum der Füllung zugeordnet.
+   - Füllungen (`fillingIndex`): neue Sessions tragen `filling` fest (beim Speichern gesetzt),
+     alte Sessions ohne das Feld werden über ihr Datum zugeordnet.
+   - Kein Tausch, solange für die Flasche ein Session-Entwurf offen ist (erst speichern/verwerfen)
+   - Tausch-Dialog fragt bei unplausiblen Werten nach (Gewicht > Vollgewicht + 0,5 kg, Tara ±50 %)
      Karte zählt die Sessions der aktuellen Füllung plus „insgesamt N×", der Verlauf zeigt
      pro Füllung eine Überschrift (neueste zuerst). Ohne Tausch sieht alles aus wie vorher
    - Session löschen schreibt das Gas nur gut, wenn sie zur aktuellen Füllung gehört
@@ -121,6 +126,21 @@ Array von bottle-Objekten:
      Füllung noch keine Session liegt (Fehl-Tipp). Stellt Gewicht, Tara und Wiege-Datum der
      alten Flasche aus dem `refills`-Eintrag wieder her und entfernt ihn. Nach der ersten
      Session der neuen Füllung gibt es den Knopf nicht mehr
+10. **Fokus: aktive Flasche (seit 2026-10-11):** nur bei 2+ Flaschen sichtbar.
+   - Genau eine Flasche trägt `active: true`: grünes Badge „🔥 Am Grill", grüner Rahmen (#34C759, linke Kante bleibt Gastyp-Farbe), steht
+     in der Liste ganz oben. Die anderen zeigen „Reserve" und den Knopf „🎯 Jetzt am Grill"
+   - Solange keine gewählt ist, steht oben ein Hinweis und jede Karte hat den Knopf
+   - „Grillen" auf einer Reserve-Flasche fragt nach (Schutz vor Verwechslung) und macht
+     sie bei OK zur aktiven. Ist noch keine gewählt, wird die Flasche beim Grillen aktiv
+   - Import: nach dem Merge bleibt höchstens eine Flasche aktiv. Markiert das Backup selbst
+     eine andere Flasche als aktiv, gewinnt das Backup.
+     Backups ohne `active`-Feld (von vor der Funktion) lassen die Markierung unverändert
+   - Wiegen und Flaschentausch sind auf jeder Flasche möglich und ändern den Fokus nicht
+11. **Reserve-Warnung (seit 2026-10-11):** auf der aktiven Karte (bzw. der einzigen Flasche),
+   wenn das Gas höchstens noch für eine Session reicht (`isLowOnGas`: Restgas < 2 × Ø pro
+   Session, ohne Historie Füllstand ≤ 15 %). Orange mit Name und Gasmenge der besten
+   Reserve, rot wenn keine andere Flasche mit genug Gas da ist. Bei mehreren Flaschen
+   ohne gewählten Fokus erscheint keine Warnung
 
 ## Brenner-Verbrauchswerte (DEFAULT_BURNERS in index.html)
 Basis: BTU → kW (/3412) → g/h (×75 g/kWh), Vollgas:
