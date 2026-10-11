@@ -25,7 +25,7 @@ Napoleon Rogue PRO-S 525 RSIB (4 Hauptbrenner + Heckbrenner + Sizzle Zone).
 ## Dateien im Repo
 - index.html              → komplette App (React-Code im <script type="text/babel">)
 - manifest.json           → start_url & scope = /BBQ-Flammenwaechter/
-- sw.js                   → Service Worker, Cache-Name "flammenwaechter-v4" (bei jedem Release hochzählen)
+- sw.js                   → Service Worker, Cache-Name "flammenwaechter-v5" (bei jedem Release hochzählen)
 - icon.svg                → Quelldatei (Flammen-Monster, BBQ-Lab Stil)
 - icon-192.png / icon-512.png / icon-180.png / apple-touch-icon.png
 - favicon.png / favicon-16.png
@@ -50,6 +50,15 @@ Array von bottle-Objekten:
       durationSeconds: number,
       consumedKg: number,
       burners: [{ label: string, grams: number }]   // pro Brenner kumulierte Gramm über alle Stufenwechsel
+    }
+  ],
+  refills: [             // optional, ein Eintrag pro Flaschentausch (seit 2026-10-11)
+    {
+      date: ISO-string,
+      weight: number,              // kg, Gewicht der neuen Flasche
+      previousWeight: number,      // kg, Stand der alten Flasche beim Tausch
+      previousEmptyWeight: number, // kg, Tara der alten Flasche
+      previousLastWeighed: ISO-string
     }
   ]
 }
@@ -100,6 +109,18 @@ Array von bottle-Objekten:
 8. **Lösch-Bestätigung für Flaschen (seit 2026-10-11):** 🗑️ fragt per `window.confirm` nach
    und nennt die Zahl der Sessions, die mit verloren gehen. Ein Session-Entwurf der
    gelöschten Flasche wird mit entfernt.
+9. **Flaschentausch (seit 2026-10-11):** Knopf „🔄 Flasche getauscht" auf der Karte öffnet
+   das SwapModal (Gewicht der neuen Flasche, vorbelegt mit Vollgewicht, und Tara).
+   - Der Eintrag bleibt derselbe, alle Sessions bleiben erhalten, `refills` bekommt einen Eintrag
+   - Geänderte Tara verschiebt `fullWeight` mit (Gasmenge bleibt gleich)
+   - Füllungen (`fillingIndex`): Sessions werden über ihr Datum der Füllung zugeordnet.
+     Karte zählt die Sessions der aktuellen Füllung plus „insgesamt N×", der Verlauf zeigt
+     pro Füllung eine Überschrift (neueste zuerst). Ohne Tausch sieht alles aus wie vorher
+   - Session löschen schreibt das Gas nur gut, wenn sie zur aktuellen Füllung gehört
+   - Rückgängig: im Verlauf erscheint „↩️ Tausch rückgängig machen", solange in der neuen
+     Füllung noch keine Session liegt (Fehl-Tipp). Stellt Gewicht, Tara und Wiege-Datum der
+     alten Flasche aus dem `refills`-Eintrag wieder her und entfernt ihn. Nach der ersten
+     Session der neuen Füllung gibt es den Knopf nicht mehr
 
 ## Brenner-Verbrauchswerte (DEFAULT_BURNERS in index.html)
 Basis: BTU → kW (/3412) → g/h (×75 g/kWh), Vollgas:

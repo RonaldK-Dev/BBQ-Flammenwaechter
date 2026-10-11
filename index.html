@@ -157,6 +157,13 @@ function getForecastBasis(bottles) {
   };
 }
 
+// Füllungen: jeder Flaschentausch (bottle.refills) startet eine neue Füllung.
+// Liefert 0 für Sessions vor dem ersten Tausch, 1 nach dem ersten usw.
+function fillingIndex(bottle, session) {
+  const when = new Date(session.date);
+  return (bottle.refills || []).filter((r) => new Date(r.date) <= when).length;
+}
+
 function formatReach(hours) {
   if (hours < 1) return `~${Math.round(hours * 60)} min`;
   if (hours < 10) return `~${hours.toFixed(1).replace(".", ",")} h`;
@@ -223,7 +230,7 @@ function GaugeArc({ pct }) {
   );
 }
 
-function BottleCard({ bottle, forecast, onEdit, onDelete, onWeigh, onGrill, onHistory }) {
+function BottleCard({ bottle, forecast, onEdit, onDelete, onWeigh, onSwap, onGrill, onHistory }) {
   const gasKg = bottle.fullWeight - bottle.emptyWeight;
   const currentGas = Math.max(0, bottle.currentWeight - bottle.emptyWeight);
   const pct = gasKg > 0 ? Math.min(100, Math.round((currentGas / gasKg) * 100)) : 0;
@@ -231,6 +238,8 @@ function BottleCard({ bottle, forecast, onEdit, onDelete, onWeigh, onGrill, onHi
   const gasType = GAS_TYPES.find((g) => g.label === bottle.gasType) || GAS_TYPES[0];
   const sessions = bottle.sessions || [];
   const sessionCount = sessions.length;
+  const refillCount = (bottle.refills || []).length;
+  const fillSessionCount = sessions.filter((s) => fillingIndex(bottle, s) === refillCount).length;
   // Sessions abgerundet: lieber eine zu wenig versprechen als mit leerer Flasche dastehen
   const sessionsLeft = forecast ? Math.floor(currentGas / forecast.avgSessionKg) : 0;
   const hoursLeft = forecast ? (currentGas * 1000) / forecast.gramsPerHour : 0;
@@ -332,7 +341,7 @@ function BottleCard({ bottle, forecast, onEdit, onDelete, onWeigh, onGrill, onHi
       )}
 
       {/* Session-Statistik */}
-      {sessionCount > 0 && (
+      {(sessionCount > 0 || refillCount > 0) && (
         <div
           onClick={() => onHistory(bottle)}
           style={{
@@ -347,10 +356,15 @@ function BottleCard({ bottle, forecast, onEdit, onDelete, onWeigh, onGrill, onHi
           }}
         >
           <div style={{ fontFamily: "system-ui" }}>
-            <div style={{ color: "#636366", fontSize: 10 }}>GRILL-SESSIONS</div>
-            <div style={{ color: "#F2F2F7", fontSize: 15, fontWeight: 700 }}>
-              {sessionCount}× gegrillt 🔥
+            <div style={{ color: "#636366", fontSize: 10 }}>
+              {refillCount > 0 ? `GRILL-SESSIONS · FÜLLUNG ${refillCount + 1}` : "GRILL-SESSIONS"}
             </div>
+            <div style={{ color: "#F2F2F7", fontSize: 15, fontWeight: 700 }}>
+              {refillCount > 0 ? fillSessionCount : sessionCount}× gegrillt 🔥
+            </div>
+            {refillCount > 0 && (
+              <div style={{ color: "#8E8E93", fontSize: 11, marginTop: 2 }}>insgesamt {sessionCount}×</div>
+            )}
           </div>
           <div style={{ color: "#8E8E93", fontSize: 13, fontFamily: "system-ui" }}>Verlauf ›</div>
         </div>
@@ -398,6 +412,9 @@ function BottleCard({ bottle, forecast, onEdit, onDelete, onWeigh, onGrill, onHi
           🔥 Grillen
         </button>
       </div>
+      <button onClick={() => onSwap(bottle)} style={{ ...dataBtn, width: "100%", marginTop: 10, flex: "none" }}>
+        <span aria-hidden="true">🔄</span> Flasche getauscht
+      </button>
     </div>
   );
 }
@@ -766,6 +783,59 @@ function WeighModal({ bottle, onSave, onCancel }) {
         <button onClick={onCancel} style={cancelBtn}>Abbrechen</button>
         <button onClick={() => onSave(parseFloat(weight))} style={{ ...primaryBtn, flex: 2, background: color, color: "#fff", cursor: "pointer" }}>
           Gewicht speichern
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Flaschentausch: leere Flasche gegen eine volle. Der Eintrag bleibt derselbe,
+// alle Sessions bleiben erhalten, im Verlauf beginnt eine neue Füllung.
+function SwapModal({ bottle, onSave, onCancel }) {
+  const gasKg = bottle.fullWeight - bottle.emptyWeight;
+  const [emptyWeight, setEmptyWeight] = useState(bottle.emptyWeight.toString());
+  const [weight, setWeight] = useState(bottle.fullWeight.toString());
+  const [weightTouched, setWeightTouched] = useState(false);
+  const empty = parseFloat(emptyWeight);
+  const w = parseFloat(weight);
+  const isValid = empty > 0 && w > empty;
+  const pct = isValid && gasKg > 0 ? Math.min(100, Math.round(((w - empty) / gasKg) * 100)) : 0;
+  const color = getLevelColor(pct);
+  const sessionCount = (bottle.sessions || []).length;
+
+  // Neue Tara verschiebt das Vollgewicht mit, solange das Gewicht nicht von Hand geändert wurde
+  function onEmpty(v) {
+    setEmptyWeight(v);
+    if (!weightTouched && parseFloat(v) > 0) setWeight(String(Number((parseFloat(v) + gasKg).toFixed(2))));
+  }
+  function onWeight(v) { setWeight(v); setWeightTouched(true); }
+
+  return (
+    <div>
+      <div style={{ textAlign: "center", marginBottom: 20 }}>
+        <GaugeArc pct={pct} />
+        <div style={{ color, fontSize: 42, fontWeight: 800, fontFamily: "system-ui" }}>{pct}%</div>
+        <div style={{ color: "#8E8E93", fontSize: 13, fontFamily: "system-ui" }}>Füllstand der neuen Flasche</div>
+      </div>
+      <InputField label="Gewicht der neuen Flasche" value={weight} onChange={onWeight} placeholder="z.B. 11.9" unit="kg" type="number" />
+      <InputField label="Leergewicht (Tara)" value={emptyWeight} onChange={onEmpty} placeholder="z.B. 4.4" unit="kg" type="number" />
+      <div style={{ color: "#48484A", fontSize: 11, fontFamily: "system-ui", marginTop: -6, marginBottom: 14, lineHeight: 1.4 }}>
+        Tara nur ändern, wenn auf der neuen Flasche ein anderes Leergewicht aufgestempelt ist (Stahlflaschen).
+      </div>
+      <div style={{ background: "#2C2C2E", borderRadius: 10, padding: "10px 14px", marginBottom: 16, color: "#8E8E93", fontSize: 13, fontFamily: "system-ui", lineHeight: 1.4 }}>
+        {sessionCount > 0
+          ? `${sessionCount === 1 ? "Deine Grill-Session bleibt" : `Alle ${sessionCount} Grill-Sessions bleiben`} erhalten. `
+          : ""}
+        Im Verlauf beginnt Füllung {(bottle.refills || []).length + 2}.
+      </div>
+      <div style={{ display: "flex", gap: 10 }}>
+        <button onClick={onCancel} style={cancelBtn}>Abbrechen</button>
+        <button
+          onClick={() => isValid && onSave({ weight: w, emptyWeight: empty })}
+          disabled={!isValid}
+          style={{ ...primaryBtn, flex: 2, background: isValid ? "#FF6B35" : "#2C2C2E", color: isValid ? "#fff" : "#48484A", cursor: isValid ? "pointer" : "not-allowed" }}
+        >
+          Tausch speichern
         </button>
       </div>
     </div>
@@ -1186,13 +1256,36 @@ function SessionRow({ session: s, onDelete }) {
   );
 }
 
-function HistoryModal({ bottle, onCancel, onDeleteSession }) {
+function HistoryModal({ bottle, onCancel, onDeleteSession, onUndoSwap }) {
   const sessions = [...(bottle.sessions || [])].reverse();
   const totalConsumed = sessions.reduce((s, x) => s + x.consumedKg, 0);
   const totalTime = sessions.reduce((s, x) => s + x.durationSeconds, 0);
+  const refills = bottle.refills || [];
+  const shortDate = (iso) => new Date(iso).toLocaleDateString("de-AT", { day: "2-digit", month: "2-digit", year: "2-digit" });
+  // Neueste Füllung zuerst; ohne Tausch gibt es genau eine Gruppe ohne Überschrift
+  const groups = [];
+  for (let k = refills.length; k >= 0; k--) {
+    groups.push({
+      n: k + 1,
+      since: k > 0 ? refills[k - 1].date : null,
+      sessions: sessions.filter((s) => fillingIndex(bottle, s) === k),
+    });
+  }
+  // Rückgängig nur solange in der neuen Füllung noch nicht gegrillt wurde (Fehl-Tipp).
+  // Danach wäre der alte Stand falsch, weil die Sessions schon von der neuen Flasche abgezogen sind.
+  const lastRefill = refills[refills.length - 1];
+  const canUndoSwap = !!lastRefill && groups[0].sessions.length === 0;
+  function confirmUndoSwap() {
+    if (window.confirm(`Tausch vom ${shortDate(lastRefill.date)} zurücknehmen?\n\nDer Füllstand wird wieder auf ${formatKg(lastRefill.previousWeight)} gesetzt (Stand vor dem Tausch).`)) {
+      onUndoSwap();
+    }
+  }
   function confirmDelete(s) {
-    const when = new Date(s.date).toLocaleDateString("de-AT", { day: "2-digit", month: "2-digit", year: "2-digit" });
-    if (window.confirm(`Session vom ${when} (${(s.consumedKg * 1000).toFixed(0)} g) löschen?\n\nDas geschätzte Gas wird dem Füllstand wieder gutgeschrieben.`)) {
+    const when = shortDate(s.date);
+    const note = fillingIndex(bottle, s) === refills.length
+      ? "Das geschätzte Gas wird dem Füllstand wieder gutgeschrieben."
+      : "Die Session gehört zu einer früheren Füllung, der aktuelle Füllstand bleibt unverändert.";
+    if (window.confirm(`Session vom ${when} (${(s.consumedKg * 1000).toFixed(0)} g) löschen?\n\n${note}`)) {
       onDeleteSession(s.id);
     }
   }
@@ -1213,13 +1306,28 @@ function HistoryModal({ bottle, onCancel, onDeleteSession }) {
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: "50vh", overflowY: "auto" }}>
-        {sessions.length === 0 && (
+        {sessions.length === 0 && refills.length === 0 && (
           <div style={{ color: "#48484A", textAlign: "center", padding: 30, fontFamily: "system-ui" }}>
             Noch keine Sessions
           </div>
         )}
-        {sessions.map((s) => (
-          <SessionRow key={s.id} session={s} onDelete={confirmDelete} />
+        {groups.map((g) => (
+          <React.Fragment key={g.n}>
+            {refills.length > 0 && (
+              <div style={{ color: "#8E8E93", fontSize: 11, fontWeight: 600, fontFamily: "system-ui", textTransform: "uppercase", letterSpacing: 0.5, padding: "6px 2px 0" }}>
+                Füllung {g.n}{g.since ? ` · seit ${shortDate(g.since)}` : ""}
+                {" · "}{g.sessions.length === 0 ? "noch keine Session" : `${g.sessions.length} ${g.sessions.length === 1 ? "Session" : "Sessions"}, ${formatKg(g.sessions.reduce((sum, x) => sum + x.consumedKg, 0))}`}
+              </div>
+            )}
+            {canUndoSwap && g.n === refills.length + 1 && (
+              <button onClick={confirmUndoSwap} style={{ ...dataBtn, flex: "none", width: "100%" }}>
+                <span aria-hidden="true">↩️</span> Tausch rückgängig machen
+              </button>
+            )}
+            {g.sessions.map((s) => (
+              <SessionRow key={s.id} session={s} onDelete={confirmDelete} />
+            ))}
+          </React.Fragment>
         ))}
       </div>
 
@@ -1241,6 +1349,7 @@ function App() {
   const [showAdd, setShowAdd] = useState(false);
   const [editBottle, setEditBottle] = useState(null);
   const [weighBottle, setWeighBottle] = useState(null);
+  const [swapBottle, setSwapBottle] = useState(null);
   const [grillBottle, setGrillBottle] = useState(null);
   const [historyBottle, setHistoryBottle] = useState(null);
 
@@ -1281,6 +1390,47 @@ function App() {
     save(bottles.map((b) => (b.id === id ? { ...b, currentWeight: weight, lastWeighed: new Date().toISOString() } : b)));
     setWeighBottle(null);
   }
+  function handleSwap(id, { weight, emptyWeight }) {
+    const now = new Date().toISOString();
+    save(
+      bottles.map((b) => {
+        if (b.id !== id) return b;
+        const gasKg = b.fullWeight - b.emptyWeight;
+        return {
+          ...b,
+          emptyWeight,
+          fullWeight: Math.round((emptyWeight + gasKg) * 100) / 100,
+          currentWeight: weight,
+          lastWeighed: now,
+          // previous*: Stand der alten Flasche beim Tausch (für Rückgängig und spätere Kalibrierung)
+          refills: [...(b.refills || []), { date: now, weight, previousWeight: b.currentWeight, previousEmptyWeight: b.emptyWeight, previousLastWeighed: b.lastWeighed }],
+        };
+      })
+    );
+    setSwapBottle(null);
+  }
+  function handleUndoSwap() {
+    const id = historyBottle.id;
+    let updatedBottle = null;
+    const updated = bottles.map((b) => {
+      if (b.id !== id) return b;
+      const refills = b.refills || [];
+      const last = refills[refills.length - 1];
+      if (!last) return (updatedBottle = b);
+      const gasKg = b.fullWeight - b.emptyWeight;
+      updatedBottle = {
+        ...b,
+        emptyWeight: last.previousEmptyWeight,
+        fullWeight: Math.round((last.previousEmptyWeight + gasKg) * 100) / 100,
+        currentWeight: last.previousWeight,
+        lastWeighed: last.previousLastWeighed || b.lastWeighed,
+        refills: refills.slice(0, -1),
+      };
+      return updatedBottle;
+    });
+    save(updated);
+    setHistoryBottle(updatedBottle);
+  }
   function handleGrillFinish(session) {
     const id = grillBottle.id;
     save(
@@ -1302,7 +1452,9 @@ function App() {
     const updated = bottles.map((b) => {
       if (b.id !== id) return b;
       const sess = (b.sessions || []).find((s) => s.id === sessionId);
-      const restored = sess ? Math.min(b.fullWeight, b.currentWeight + sess.consumedKg) : b.currentWeight;
+      // Gas nur gutschreiben, wenn die Session zur aktuellen Füllung gehört
+      const inCurrentFilling = sess && fillingIndex(b, sess) === (b.refills || []).length;
+      const restored = inCurrentFilling ? Math.min(b.fullWeight, b.currentWeight + sess.consumedKg) : b.currentWeight;
       updatedBottle = {
         ...b,
         currentWeight: Math.round(restored * 100) / 100,
@@ -1395,6 +1547,7 @@ function App() {
               onEdit={setEditBottle}
               onDelete={handleDelete}
               onWeigh={setWeighBottle}
+              onSwap={setSwapBottle}
               onGrill={setGrillBottle}
               onHistory={setHistoryBottle}
             />
@@ -1455,6 +1608,11 @@ function App() {
           <WeighModal bottle={weighBottle} onSave={(weight) => handleWeigh(weighBottle.id, weight)} onCancel={() => setWeighBottle(null)} />
         </Modal>
       )}
+      {swapBottle && (
+        <Modal title={`🔄 ${swapBottle.name}`} onClose={() => setSwapBottle(null)}>
+          <SwapModal bottle={swapBottle} onSave={(data) => handleSwap(swapBottle.id, data)} onCancel={() => setSwapBottle(null)} />
+        </Modal>
+      )}
       {grillBottle && (
         <Modal title={`🔥 ${grillBottle.name}`} onClose={() => setGrillBottle(null)}>
           <GrillModal bottle={grillBottle} onFinish={handleGrillFinish} onCancel={() => setGrillBottle(null)} />
@@ -1462,7 +1620,7 @@ function App() {
       )}
       {historyBottle && (
         <Modal title={`📊 ${historyBottle.name}`} onClose={() => setHistoryBottle(null)}>
-          <HistoryModal bottle={historyBottle} onCancel={() => setHistoryBottle(null)} onDeleteSession={handleDeleteSession} />
+          <HistoryModal bottle={historyBottle} onCancel={() => setHistoryBottle(null)} onDeleteSession={handleDeleteSession} onUndoSwap={handleUndoSwap} />
         </Modal>
       )}
     </div>
