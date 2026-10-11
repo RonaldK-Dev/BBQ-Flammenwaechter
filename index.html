@@ -41,6 +41,10 @@
 const { useState, useEffect, useRef } = React;
 
 
+// App-Version, steht im Kopf neben "BBQ-Lab". Bei jedem Release zusammen mit dem
+// Cache-Namen in sw.js hochzählen: Version 1.N gehört zu Cache "flammenwaechter-vN".
+const APP_VERSION = "1.9";
+
 const STORAGE_KEY = "gas-bottle-tracker-v1";
 
 // Laufende, noch nicht gespeicherte Grill-Session als Entwurf sichern.
@@ -1707,7 +1711,7 @@ function App() {
       <div style={{ background: "#1C1C1E", padding: "52px 20px 20px", borderBottom: "1px solid #2C2C2E", position: "sticky", top: 0, zIndex: 10 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <div>
-            <div style={{ color: "#8E8E93", fontSize: 12, fontWeight: 600, letterSpacing: 0.5, textTransform: "uppercase" }}>BBQ-Lab</div>
+            <div style={{ color: "#8E8E93", fontSize: 12, fontWeight: 600, letterSpacing: 0.5, textTransform: "uppercase" }}>BBQ-Lab <span style={{ color: "#636366", fontWeight: 500, textTransform: "none" }}>· v{APP_VERSION}</span></div>
             <div style={{ color: "#F2F2F7", fontSize: 26, fontWeight: 800, lineHeight: 1.1, marginTop: 2 }}>Flammenwächter 🔥</div>
           </div>
           {visibleBottles.length > 0 && (

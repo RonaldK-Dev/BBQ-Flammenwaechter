@@ -25,7 +25,7 @@ Napoleon Rogue PRO-S 525 RSIB (4 Hauptbrenner + Heckbrenner + Sizzle Zone).
 ## Dateien im Repo
 - index.html              → komplette App (React-Code im <script type="text/babel">)
 - manifest.json           → start_url & scope = /BBQ-Flammenwaechter/
-- sw.js                   → Service Worker, Cache-Name "flammenwaechter-v8" (bei jedem Release hochzählen)
+- sw.js                   → Service Worker, Cache-Name "flammenwaechter-v9" (bei jedem Release hochzählen, zusammen mit `APP_VERSION` in index.html: Version 1.N gehört zu Cache vN, sie steht im App-Kopf neben „BBQ-Lab")
 - icon.svg                → Quelldatei (Flammen-Monster, BBQ-Lab Stil)
 - icon-192.png / icon-512.png / icon-180.png / apple-touch-icon.png
 - favicon.png / favicon-16.png
