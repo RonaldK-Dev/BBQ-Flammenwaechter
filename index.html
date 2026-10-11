@@ -136,6 +136,33 @@ function formatDuration(seconds) {
   return `${s}s`;
 }
 
+// Reichweiten-Prognose: Schnitt aus den letzten Sessions ALLER Flaschen (der
+// Verbrauch hängt am Grill, nicht an der Flasche) -> auch eine frisch angelegte
+// Flasche bekommt sofort eine Prognose. Mini-Sessions (Fehlstarts) zählen nicht.
+const FORECAST_MAX_SESSIONS = 10;
+const FORECAST_MIN_SECONDS = 60;
+function getForecastBasis(bottles) {
+  const recent = bottles
+    .flatMap((b) => b.sessions || [])
+    .filter((s) => s.durationSeconds >= FORECAST_MIN_SECONDS && s.consumedKg > 0)
+    .sort((a, b) => new Date(b.date) - new Date(a.date))
+    .slice(0, FORECAST_MAX_SESSIONS);
+  if (recent.length === 0) return null;
+  const totalKg = recent.reduce((sum, s) => sum + s.consumedKg, 0);
+  const totalHours = recent.reduce((sum, s) => sum + s.durationSeconds, 0) / 3600;
+  return {
+    count: recent.length,
+    avgSessionKg: totalKg / recent.length,
+    gramsPerHour: (totalKg * 1000) / totalHours,
+  };
+}
+
+function formatReach(hours) {
+  if (hours < 1) return `~${Math.round(hours * 60)} min`;
+  if (hours < 10) return `~${hours.toFixed(1).replace(".", ",")} h`;
+  return `~${Math.round(hours)} h`;
+}
+
 function getLevelColor(pct) {
   if (pct > 40) return "#34C759";
   if (pct > 15) return "#FF9F0A";
@@ -196,7 +223,7 @@ function GaugeArc({ pct }) {
   );
 }
 
-function BottleCard({ bottle, onEdit, onDelete, onWeigh, onGrill, onHistory }) {
+function BottleCard({ bottle, forecast, onEdit, onDelete, onWeigh, onGrill, onHistory }) {
   const gasKg = bottle.fullWeight - bottle.emptyWeight;
   const currentGas = Math.max(0, bottle.currentWeight - bottle.emptyWeight);
   const pct = gasKg > 0 ? Math.min(100, Math.round((currentGas / gasKg) * 100)) : 0;
@@ -204,6 +231,9 @@ function BottleCard({ bottle, onEdit, onDelete, onWeigh, onGrill, onHistory }) {
   const gasType = GAS_TYPES.find((g) => g.label === bottle.gasType) || GAS_TYPES[0];
   const sessions = bottle.sessions || [];
   const sessionCount = sessions.length;
+  // Sessions abgerundet: lieber eine zu wenig versprechen als mit leerer Flasche dastehen
+  const sessionsLeft = forecast ? Math.floor(currentGas / forecast.avgSessionKg) : 0;
+  const hoursLeft = forecast ? (currentGas * 1000) / forecast.gramsPerHour : 0;
 
   return (
     <div
@@ -254,7 +284,7 @@ function BottleCard({ bottle, onEdit, onDelete, onWeigh, onGrill, onHistory }) {
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <button onClick={() => onEdit(bottle)} style={iconBtn}>✏️</button>
-          <button onClick={() => onDelete(bottle.id)} style={iconBtn}>🗑️</button>
+          <button onClick={() => onDelete(bottle)} style={iconBtn}>🗑️</button>
         </div>
       </div>
 
@@ -285,6 +315,21 @@ function BottleCard({ bottle, onEdit, onDelete, onWeigh, onGrill, onHistory }) {
           </div>
         </div>
       </div>
+
+      {/* Reichweiten-Prognose */}
+      {forecast && currentGas > 0 && (
+        <div style={{ marginTop: 12, background: "#2C2C2E", borderRadius: 12, padding: "10px 14px", fontFamily: "system-ui" }}>
+          <div style={{ color: "#636366", fontSize: 10 }}>REICHWEITE</div>
+          <div style={{ color: "#F2F2F7", fontSize: 15, fontWeight: 700 }}>
+            {sessionsLeft < 1 ? "Keine ganze Session mehr" : `~${sessionsLeft} ${sessionsLeft === 1 ? "Session" : "Sessions"}`}
+            {" · "}{formatReach(hoursLeft)} Grillzeit
+          </div>
+          <div style={{ color: "#8E8E93", fontSize: 11, marginTop: 2 }}>
+            Ø {Math.round(forecast.avgSessionKg * 1000)} g pro Session, {Math.round(forecast.gramsPerHour)} g/h
+            {" "}(letzte {forecast.count === 1 ? "Session" : `${forecast.count} Sessions`})
+          </div>
+        </div>
+      )}
 
       {/* Session-Statistik */}
       {sessionCount > 0 && (
@@ -1031,6 +1076,7 @@ function GrillModal({ bottle, onFinish, onCancel }) {
           { label: "Verbrauch aktuell", value: `~${gramsPerHour} g/h` },
           { label: "Diese Session", value: `${(consumed).toFixed(0)} g` },
           { label: "Gas danach", value: formatKg(remainingAfter) },
+          { label: "Reicht bei dieser Einstellung", value: noBurner ? "–" : remainingAfter <= 0 ? "leer" : formatReach((remainingAfter * 1000) / gramsPerHour) },
         ].map((item) => (
           <div key={item.label} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", color: "#8E8E93", fontSize: 13 }}>
             <span>{item.label}</span>
@@ -1220,8 +1266,16 @@ function App() {
     save(bottles.map((b) => (b.id === bottle.id ? bottle : b)));
     setEditBottle(null);
   }
-  function handleDelete(id) {
-    save(bottles.filter((b) => b.id !== id));
+  function handleDelete(bottle) {
+    const count = (bottle.sessions || []).length;
+    const history = count > 0
+      ? `\n\nDamit ${count === 1 ? "geht auch die eine gespeicherte Grill-Session" : `gehen auch alle ${count} Grill-Sessions`} dieser Flasche verloren.`
+      : "";
+    if (!window.confirm(`Flasche „${bottle.name}“ wirklich löschen?${history}`)) return;
+    save(bottles.filter((b) => b.id !== bottle.id));
+    // verwaisten Session-Entwurf dieser Flasche mit entfernen
+    const draft = loadGrillDraft();
+    if (draft && draft.bottleId === bottle.id) clearGrillDraft();
   }
   function handleWeigh(id, weight) {
     save(bottles.map((b) => (b.id === id ? { ...b, currentWeight: weight, lastWeighed: new Date().toISOString() } : b)));
@@ -1294,6 +1348,7 @@ function App() {
     e.target.value = "";
   }
 
+  const forecastBasis = getForecastBasis(bottles);
   const totalGasKg = bottles.reduce((sum, b) => sum + Math.max(0, b.currentWeight - b.emptyWeight), 0);
 
   return (
@@ -1336,6 +1391,7 @@ function App() {
             <BottleCard
               key={bottle.id}
               bottle={bottle}
+              forecast={forecastBasis}
               onEdit={setEditBottle}
               onDelete={handleDelete}
               onWeigh={setWeighBottle}

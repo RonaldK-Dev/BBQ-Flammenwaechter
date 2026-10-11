@@ -25,7 +25,7 @@ Napoleon Rogue PRO-S 525 RSIB (4 Hauptbrenner + Heckbrenner + Sizzle Zone).
 ## Dateien im Repo
 - index.html              → komplette App (React-Code im <script type="text/babel">)
 - manifest.json           → start_url & scope = /BBQ-Flammenwaechter/
-- sw.js                   → Service Worker, Cache-Name "flammenwaechter-v1"
+- sw.js                   → Service Worker, Cache-Name "flammenwaechter-v4" (bei jedem Release hochzählen)
 - icon.svg                → Quelldatei (Flammen-Monster, BBQ-Lab Stil)
 - icon-192.png / icon-512.png / icon-180.png / apple-touch-icon.png
 - favicon.png / favicon-16.png
@@ -87,6 +87,19 @@ Array von bottle-Objekten:
      Bestätigung; gelöschte Session bucht ihr geschätztes Gas wieder auf currentWeight
      zurück (Umkehrung von handleGrillFinish, gedeckelt auf fullWeight)
 6. Daten-Export/-Import: lokales JSON-Backup, Import als Merge nach id (kein Datenverlust bei PWA-Löschen/Gerätewechsel)
+7. **Reichweiten-Prognose (seit 2026-10-11):**
+   - Auf jeder Flaschen-Karte: „~X Sessions · ~Y h Grillzeit" plus die Basiswerte darunter
+   - Basis (`getForecastBasis`): die letzten 10 Sessions ALLER Flaschen zusammen (der
+     Verbrauch hängt am Grill, nicht an der Flasche), Sessions unter 60 s zählen nicht.
+     g/h = Summe Verbrauch / Summe Dauer, Ø pro Session = Mittelwert
+   - Sessions werden abgerundet (lieber eine zu wenig versprechen), ohne Sessions und bei
+     leerer Flasche wird der Block ausgeblendet
+   - Im Grillen-Modal zusätzlich live: „Reicht bei dieser Einstellung" = Restgas / aktueller
+     Verbrauch der eingestellten Brenner
+   - Die Prognose ist nur so genau wie die Brenner-Werte unten (teils unkalibriert)
+8. **Lösch-Bestätigung für Flaschen (seit 2026-10-11):** 🗑️ fragt per `window.confirm` nach
+   und nennt die Zahl der Sessions, die mit verloren gehen. Ein Session-Entwurf der
+   gelöschten Flasche wird mit entfernt.
 
 ## Brenner-Verbrauchswerte (DEFAULT_BURNERS in index.html)
 Basis: BTU → kW (/3412) → g/h (×75 g/kWh), Vollgas:
