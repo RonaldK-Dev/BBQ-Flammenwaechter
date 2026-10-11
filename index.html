@@ -248,7 +248,7 @@ function GaugeArc({ pct }) {
 // focus: "active" (hängt am Grill), "reserve", "none" (mehrere Flaschen, noch keine
 // gewählt) oder null (nur eine Flasche -> keine Markierung nötig)
 // reserve: beste Reserve-Flasche mit genug Gas (oder null) -> für die Reserve-Warnung
-function BottleCard({ bottle, forecast, focus, reserve, onSetActive, onEdit, onDelete, onWeigh, onSwap, onGrill, onHistory }) {
+function BottleCard({ bottle, forecast, focus, reserve, onSetActive, onEdit, onArchive, onDelete, onWeigh, onSwap, onGrill, onHistory }) {
   const gasKg = bottle.fullWeight - bottle.emptyWeight;
   const currentGas = Math.max(0, bottle.currentWeight - bottle.emptyWeight);
   const pct = gasKg > 0 ? Math.min(100, Math.round((currentGas / gasKg) * 100)) : 0;
@@ -261,9 +261,12 @@ function BottleCard({ bottle, forecast, focus, reserve, onSetActive, onEdit, onD
   // Sessions abgerundet: lieber eine zu wenig versprechen als mit leerer Flasche dastehen
   const sessionsLeft = forecast ? Math.floor(currentGas / forecast.avgSessionKg) : 0;
   const hoursLeft = forecast ? (currentGas * 1000) / forecast.gramsPerHour : 0;
-  // Warnen nur bei der Flasche am Grill bzw. bei der einzigen Flasche
-  const showReserveWarning = (focus === "active" || focus === null) && isLowOnGas(bottle, forecast);
-  const warnColor = reserve ? "#FF9F0A" : "#FF3B30";
+  // Jede knappe Flasche bekommt einen Hinweis. Bei der Flasche am Grill (bzw. der
+  // einzigen) geht es um die Reserve, bei einer Reserve-Flasche darum, dass sie selbst
+  // fast leer ist und im Ernstfall nicht weit trägt.
+  const showReserveWarning = isLowOnGas(bottle, forecast);
+  const isBackup = focus === "reserve";
+  const warnColor = isBackup || focus === "none" || reserve ? "#FF9F0A" : "#FF3B30";
 
   return (
     <div
@@ -325,8 +328,9 @@ function BottleCard({ bottle, forecast, focus, reserve, onSetActive, onEdit, onD
           </div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={() => onEdit(bottle)} style={iconBtn}>✏️</button>
-          <button onClick={() => onDelete(bottle)} style={iconBtn}>🗑️</button>
+          <button onClick={() => onEdit(bottle)} style={iconBtn} aria-label="Bearbeiten">✏️</button>
+          <button onClick={() => onArchive(bottle)} style={iconBtn} aria-label="Archivieren">📦</button>
+          <button onClick={() => onDelete(bottle)} style={iconBtn} aria-label="Löschen">🗑️</button>
         </div>
       </div>
 
@@ -376,9 +380,18 @@ function BottleCard({ bottle, forecast, focus, reserve, onSetActive, onEdit, onD
       {/* Reserve-Warnung */}
       {showReserveWarning && (
         <div style={{ marginTop: 12, background: warnColor + "18", border: `1px solid ${warnColor}40`, borderRadius: 12, padding: "10px 14px", color: warnColor, fontSize: 13, fontWeight: 600, fontFamily: "system-ui", lineHeight: 1.4 }}>
-          ⚠️ {forecast && sessionsLeft >= 1 ? "Reicht nur noch für etwa eine Session." : forecast ? "Reicht nicht mehr für eine ganze Session." : "Die Flasche ist fast leer."}
+          ⚠️ {isBackup ? "Reserve fast leer: " : ""}
+          {forecast && sessionsLeft >= 1
+            ? `${isBackup ? "reicht" : "Reicht"} nur noch für etwa eine Session.`
+            : forecast
+            ? `${isBackup ? "reicht" : "Reicht"} nicht mehr für eine ganze Session.`
+            : isBackup ? "kaum noch Gas drin." : "Die Flasche ist fast leer."}
           {" "}
-          {reserve
+          {isBackup
+            ? "Rechtzeitig tauschen, bevor die Flasche am Grill leer wird."
+            : focus === "none"
+            ? ""
+            : reserve
             ? `Reserve bereitstellen: „${reserve.name}“ (${formatKg(Math.max(0, reserve.currentWeight - reserve.emptyWeight))} Gas).`
             : "Keine volle Reserve da, neue Flasche besorgen."}
         </div>
@@ -1405,12 +1418,55 @@ function HistoryModal({ bottle, onCancel, onDeleteSession, onUndoSwap }) {
   );
 }
 
+// Archiv: Flaschen, die nicht mehr in Gebrauch sind (zurückgegeben, auf andere Größe
+// oder Marke umgestiegen). Sie verschwinden aus der Liste, ihre Sessions bleiben.
+function ArchiveModal({ bottles, onRestore, onDelete, onHistory, onCancel }) {
+  const smallBtn = { ...dataBtn, padding: "9px 0", fontSize: 12 };
+  return (
+    <div>
+      <div style={{ color: "#8E8E93", fontSize: 12, fontFamily: "system-ui", lineHeight: 1.4, marginBottom: 14 }}>
+        Archivierte Flaschen zählen nicht mehr zum Gas-Bestand. Ihre Sessions bleiben erhalten und fließen weiter in die Reichweiten-Prognose ein.
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: "55vh", overflowY: "auto" }}>
+        {bottles.map((b) => {
+          const sessions = b.sessions || [];
+          const totalKg = sessions.reduce((sum, x) => sum + x.consumedKg, 0);
+          return (
+            <div key={b.id} style={{ background: "#2C2C2E", borderRadius: 12, padding: "12px 14px", fontFamily: "system-ui" }}>
+              <div style={{ color: "#F2F2F7", fontSize: 15, fontWeight: 700 }}>{b.name}</div>
+              <div style={{ color: "#8E8E93", fontSize: 12, marginTop: 3 }}>
+                {b.gasType} · {sessions.length} {sessions.length === 1 ? "Session" : "Sessions"} · {formatKg(totalKg)} verbraucht
+              </div>
+              {b.archivedAt && (
+                <div style={{ color: "#636366", fontSize: 11, marginTop: 2 }}>
+                  Archiviert am {new Date(b.archivedAt).toLocaleDateString("de-AT")}
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                {(sessions.length > 0 || (b.refills || []).length > 0) && (
+                  <button onClick={() => onHistory(b)} style={smallBtn}>Verlauf</button>
+                )}
+                <button onClick={() => onRestore(b)} style={{ ...smallBtn, color: "#34C759", border: "1px solid #34C75940" }}>Zurückholen</button>
+                <button onClick={() => onDelete(b)} style={{ ...smallBtn, color: "#FF3B30", border: "1px solid #FF3B3040" }}>Löschen</button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <button onClick={onCancel} style={{ ...cancelBtn, width: "100%", marginTop: 16, flex: "none" }}>
+        Schließen
+      </button>
+    </div>
+  );
+}
+
 function App() {
   const [bottles, setBottles] = useState([]);
   const [showAdd, setShowAdd] = useState(false);
   const [editBottle, setEditBottle] = useState(null);
   const [weighBottle, setWeighBottle] = useState(null);
   const [swapBottle, setSwapBottle] = useState(null);
+  const [showArchive, setShowArchive] = useState(false);
   const [grillBottle, setGrillBottle] = useState(null);
   const [historyBottle, setHistoryBottle] = useState(null);
 
@@ -1441,11 +1497,33 @@ function App() {
     const history = count > 0
       ? `\n\nDamit ${count === 1 ? "geht auch die eine gespeicherte Grill-Session" : `gehen auch alle ${count} Grill-Sessions`} dieser Flasche verloren.`
       : "";
-    if (!window.confirm(`Flasche „${bottle.name}“ wirklich löschen?${history}`)) return;
+    const tip = count > 0 && !bottle.archived ? "\n\nTipp: Mit 📦 archivierst du die Flasche stattdessen, dann bleibt der Verlauf erhalten." : "";
+    if (!window.confirm(`Flasche „${bottle.name}“ wirklich löschen?${history}${tip}`)) return;
     save(bottles.filter((b) => b.id !== bottle.id));
+    if (!bottles.some((b) => b.archived && b.id !== bottle.id)) setShowArchive(false);
     // verwaisten Session-Entwurf dieser Flasche mit entfernen
     const draft = loadGrillDraft();
     if (draft && draft.bottleId === bottle.id) clearGrillDraft();
+  }
+  function handleArchive(bottle) {
+    const draft = loadGrillDraft();
+    if (draft && draft.bottleId === bottle.id) {
+      alert(`Für „${bottle.name}“ ist noch eine Grill-Session offen.\n\nBitte erst unter „Grillen“ fortsetzen und speichern (oder verwerfen), dann archivieren.`);
+      return;
+    }
+    const count = (bottle.sessions || []).length;
+    const kept = count > 0 ? ` ${count === 1 ? "Ihre Grill-Session bleibt" : `Ihre ${count} Grill-Sessions bleiben`} erhalten.` : "";
+    if (!window.confirm(`Flasche „${bottle.name}“ archivieren?\n\nSie verschwindet aus der Liste und zählt nicht mehr zum Gas-Bestand.${kept} Im Archiv kannst du sie jederzeit zurückholen.`)) return;
+    save(bottles.map((b) => (b.id === bottle.id ? { ...b, archived: true, archivedAt: new Date().toISOString(), active: false } : b)));
+  }
+  function handleRestore(bottle) {
+    save(bottles.map((b) => {
+      if (b.id !== bottle.id) return b;
+      const { archivedAt, ...rest } = b;
+      return { ...rest, archived: false };
+    }));
+    // sonst springt das Fenster beim nächsten Archivieren von selbst wieder auf
+    if (!bottles.some((b) => b.archived && b.id !== bottle.id)) setShowArchive(false);
   }
   function handleWeigh(id, weight) {
     save(bottles.map((b) => (b.id === id ? { ...b, currentWeight: weight, lastWeighed: new Date().toISOString() } : b)));
@@ -1458,7 +1536,7 @@ function App() {
   // Grillen mit einer Flasche, die nicht am Grill hängt: nachfragen (Schutz vor
   // Verwechslung), dann wird sie zur aktiven Flasche.
   function handleGrillRequest(bottle) {
-    if (bottles.length > 1 && bottle.id !== activeId) {
+    if (visibleBottles.length > 1 && bottle.id !== activeId) {
       const current = bottles.find((b) => b.id === activeId);
       if (current && !window.confirm(`Am Grill hängt laut App „${current.name}“.\n\nJetzt mit „${bottle.name}“ grillen und sie als aktive Flasche setzen?`)) return;
       handleSetActive(bottle);
@@ -1572,11 +1650,19 @@ function App() {
         // Merge nach id: bestehende aktualisieren, neue ergänzen — kein Datenverlust
         const byId = {};
         bottles.forEach((b) => { byId[b.id] = b; });
-        // Backups von vor der Fokus-Funktion kennen "active" nicht -> bisherige Markierung behalten
-        valid.forEach((b) => { byId[b.id] = b.active === undefined && byId[b.id] ? { ...b, active: byId[b.id].active } : b; });
+        // Ältere Backups kennen "active" und "archived" nicht -> Stand vom Gerät behalten,
+        // sonst käme eine archivierte Flasche stillschweigend zurück in die Liste
+        valid.forEach((b) => {
+          const cur = byId[b.id];
+          byId[b.id] = !cur ? b : {
+            ...b,
+            ...(b.active === undefined ? { active: cur.active } : {}),
+            ...(b.archived === undefined && cur.archived ? { archived: true, archivedAt: cur.archivedAt } : {}),
+          };
+        });
         // Nach dem Merge darf höchstens eine Flasche "am Grill" sein: die bisherige gewinnt
         const merged = Object.values(byId);
-        const keep = (merged.find((b) => b.active && b.id === activeId) || merged.find((b) => b.active) || {}).id;
+        const keep = (merged.find((b) => b.active && !b.archived && b.id === activeId) || merged.find((b) => b.active && !b.archived) || {}).id;
         save(merged.map((b) => (b.active && b.id !== keep ? { ...b, active: false } : b)));
         alert(`${valid.length} Flasche(n) importiert.`);
       } catch (err) {
@@ -1588,10 +1674,13 @@ function App() {
   }
 
   const forecastBasis = getForecastBasis(bottles);
-  const activeId = bottles.length > 1 ? (bottles.find((b) => b.active) || {}).id : undefined;
+  // Archivierte Flaschen sind aus Liste, Fokus und Gas-Bestand raus (Sessions zählen weiter für die Prognose)
+  const visibleBottles = bottles.filter((b) => !b.archived);
+  const archivedBottles = bottles.filter((b) => b.archived);
+  const activeId = visibleBottles.length > 1 ? (visibleBottles.find((b) => b.active) || {}).id : undefined;
   // aktive Flasche zuerst, Rest in gewohnter Reihenfolge
-  const sortedBottles = activeId ? [...bottles].sort((a, b) => (b.id === activeId) - (a.id === activeId)) : bottles;
-  const totalGasKg = bottles.reduce((sum, b) => sum + Math.max(0, b.currentWeight - b.emptyWeight), 0);
+  const sortedBottles = activeId ? [...visibleBottles].sort((a, b) => (b.id === activeId) - (a.id === activeId)) : visibleBottles;
+  const totalGasKg = visibleBottles.reduce((sum, b) => sum + Math.max(0, b.currentWeight - b.emptyWeight), 0);
 
   return (
     <div
@@ -1610,7 +1699,7 @@ function App() {
             <div style={{ color: "#8E8E93", fontSize: 12, fontWeight: 600, letterSpacing: 0.5, textTransform: "uppercase" }}>BBQ-Lab</div>
             <div style={{ color: "#F2F2F7", fontSize: 26, fontWeight: 800, lineHeight: 1.1, marginTop: 2 }}>Flammenwächter 🔥</div>
           </div>
-          {bottles.length > 0 && (
+          {visibleBottles.length > 0 && (
             <div style={{ textAlign: "right" }}>
               <div style={{ color: "#8E8E93", fontSize: 11, fontFamily: "system-ui" }}>Gesamt Gas</div>
               <div style={{ color: "#FF6B35", fontSize: 20, fontWeight: 800 }}>{totalGasKg.toFixed(2).replace(".", ",")} kg</div>
@@ -1620,7 +1709,7 @@ function App() {
       </div>
 
       <div style={{ padding: "20px 16px 0" }}>
-        {bottles.length === 0 ? (
+        {visibleBottles.length === 0 ? (
           <div style={{ textAlign: "center", padding: "60px 20px", color: "#48484A" }}>
             <div style={{ fontSize: 64, marginBottom: 16 }}>⛽</div>
             <div style={{ fontSize: 18, fontWeight: 700, color: "#636366", marginBottom: 8 }}>Noch keine Flaschen</div>
@@ -1630,7 +1719,7 @@ function App() {
           </div>
         ) : (
           <React.Fragment>
-          {bottles.length > 1 && !activeId && (
+          {visibleBottles.length > 1 && !activeId && (
             <div style={{ background: "#1C1C1E", border: "1px solid #FF6B3540", borderRadius: 14, padding: "12px 14px", marginBottom: 16, color: "#F2F2F7", fontSize: 13, lineHeight: 1.4 }}>
               Welche Flasche hängt gerade am Grill? Tippe bei ihr auf „🎯 Jetzt am Grill“.
             </div>
@@ -1640,12 +1729,13 @@ function App() {
               key={bottle.id}
               bottle={bottle}
               forecast={forecastBasis}
-              reserve={bottles
+              reserve={visibleBottles
                 .filter((b) => b.id !== bottle.id && !isLowOnGas(b, forecastBasis))
                 .sort((a, b) => (b.currentWeight - b.emptyWeight) - (a.currentWeight - a.emptyWeight))[0] || null}
-              focus={bottles.length < 2 ? null : !activeId ? "none" : bottle.id === activeId ? "active" : "reserve"}
+              focus={visibleBottles.length < 2 ? null : !activeId ? "none" : bottle.id === activeId ? "active" : "reserve"}
               onSetActive={handleSetActive}
               onEdit={setEditBottle}
+              onArchive={handleArchive}
               onDelete={handleDelete}
               onWeigh={setWeighBottle}
               onSwap={handleSwapRequest}
@@ -1672,7 +1762,7 @@ function App() {
             alignItems: "center",
             justifyContent: "center",
             gap: 8,
-            marginTop: bottles.length > 0 ? 4 : 0,
+            marginTop: visibleBottles.length > 0 ? 4 : 0,
           }}
         >
           <span style={{ fontSize: 20 }}>+</span> Flasche hinzufügen
@@ -1689,6 +1779,12 @@ function App() {
             <input type="file" accept="application/json,.json" onChange={handleImport} style={{ display: "none" }} />
           </label>
         </div>
+
+        {archivedBottles.length > 0 && (
+          <button onClick={() => setShowArchive(true)} style={{ ...dataBtn, width: "100%", marginTop: 12, flex: "none" }}>
+            <span aria-hidden="true">📦</span> Archiv ({archivedBottles.length})
+          </button>
+        )}
 
         <div style={{ color: "#48484A", fontSize: 11, fontFamily: "system-ui", textAlign: "center", marginTop: 10, lineHeight: 1.4 }}>
           Deine Daten liegen nur auf diesem Gerät. Sichere sie regelmäßig oder vor einem Gerätewechsel.
@@ -1718,6 +1814,17 @@ function App() {
       {grillBottle && (
         <Modal title={`🔥 ${grillBottle.name}`} onClose={() => setGrillBottle(null)}>
           <GrillModal bottle={grillBottle} onFinish={handleGrillFinish} onCancel={() => setGrillBottle(null)} />
+        </Modal>
+      )}
+      {showArchive && archivedBottles.length > 0 && (
+        <Modal title="📦 Archiv" onClose={() => setShowArchive(false)}>
+          <ArchiveModal
+            bottles={archivedBottles}
+            onRestore={handleRestore}
+            onDelete={handleDelete}
+            onHistory={(b) => { setShowArchive(false); setHistoryBottle(b); }}
+            onCancel={() => setShowArchive(false)}
+          />
         </Modal>
       )}
       {historyBottle && (

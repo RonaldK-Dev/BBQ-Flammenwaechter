@@ -25,7 +25,7 @@ Napoleon Rogue PRO-S 525 RSIB (4 Hauptbrenner + Heckbrenner + Sizzle Zone).
 ## Dateien im Repo
 - index.html              → komplette App (React-Code im <script type="text/babel">)
 - manifest.json           → start_url & scope = /BBQ-Flammenwaechter/
-- sw.js                   → Service Worker, Cache-Name "flammenwaechter-v6" (bei jedem Release hochzählen)
+- sw.js                   → Service Worker, Cache-Name "flammenwaechter-v7" (bei jedem Release hochzählen)
 - icon.svg                → Quelldatei (Flammen-Monster, BBQ-Lab Stil)
 - icon-192.png / icon-512.png / icon-180.png / apple-touch-icon.png
 - favicon.png / favicon-16.png
@@ -44,6 +44,8 @@ Array von bottle-Objekten:
   currentWeight: number, // kg, aktuell gewogen
   lastWeighed: ISO-string,
   active: boolean,       // optional, true = hängt am Grill (seit 2026-10-11), höchstens eine Flasche
+  archived: boolean,     // optional, true = im Archiv (seit 2026-10-11)
+  archivedAt: ISO-string,// optional, nur solange archiviert
   sessions: [
     {
       id: string,
@@ -139,8 +141,20 @@ Array von bottle-Objekten:
 11. **Reserve-Warnung (seit 2026-10-11):** auf der aktiven Karte (bzw. der einzigen Flasche),
    wenn das Gas höchstens noch für eine Session reicht (`isLowOnGas`: Restgas < 2 × Ø pro
    Session, ohne Historie Füllstand ≤ 15 %). Orange mit Name und Gasmenge der besten
-   Reserve, rot wenn keine andere Flasche mit genug Gas da ist. Bei mehreren Flaschen
-   ohne gewählten Fokus erscheint keine Warnung
+   Reserve, rot wenn keine andere Flasche mit genug Gas da ist.
+   - Auch eine knappe Reserve-Flasche bekommt einen Hinweis („Reserve fast leer: …
+     Rechtzeitig tauschen"), orange. Bei mehreren Flaschen ohne gewählten Fokus steht
+     bei jeder knappen Flasche nur der kurze Hinweis ohne Reserve-Teil
+12. **Archiv (seit 2026-10-11):** für Flaschen, die nicht mehr in Gebrauch sind (zurückgegeben,
+   andere Größe oder Marke). 📦 auf der Karte fragt nach und setzt `archived: true`.
+   - Archivierte Flaschen fehlen in Liste, Fokus-Logik, Reserve-Auswahl und „Gesamt Gas"
+     (überall `visibleBottles` statt `bottles`). Ihre Sessions zählen weiter für die Prognose
+   - Unten erscheint „📦 Archiv (N)". Das ArchiveModal zeigt je Flasche Sessions und
+     Verbrauch, mit „Verlauf", „Zurückholen" und „Löschen"
+   - Archivieren entfernt die Markierung „Am Grill" und ist gesperrt, solange ein
+     Session-Entwurf für die Flasche offen ist
+   - Export nimmt archivierte Flaschen mit. Import: kennt das Backup `archived` nicht
+     (älteres Backup), bleibt eine am Gerät archivierte Flasche archiviert
 
 ## Brenner-Verbrauchswerte (DEFAULT_BURNERS in index.html)
 Basis: BTU → kW (/3412) → g/h (×75 g/kWh), Vollgas:
